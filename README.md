@@ -75,7 +75,7 @@ There is a [docker image](https://hub.docker.com/repository/docker/zhangkin/dyna
 3. Clone the repo using [SSH Keys](https://docs.github.com/en/authentication/connecting-to-github-with-ssh):
     ```bash
     cd ~/catkin_ws/src
-    git clone git@github.com:ethz-asl/dynablox.git
+    git clone git@github.com:dylan813/dynablox.git
     ```
 
 4. Install ROS dependencies:
