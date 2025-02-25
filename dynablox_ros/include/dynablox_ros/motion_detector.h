@@ -55,6 +55,10 @@ class MotionDetector {
     // If >0, shutdown after this many evaluated frames.
     int shutdown_after = 0;
 
+    // Transform time delay handling
+    bool use_latest_transform = true;
+    double transform_lookup_timeout = 0.1;  // seconds
+
     Config() { setConfigName("MotionDetector"); }
 
    protected:

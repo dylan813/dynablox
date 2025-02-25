@@ -39,6 +39,9 @@ void MotionDetector::Config::setupParamsAndPrinting() {
   setupParam("verbose", &verbose);
   setupParam("num_threads", &num_threads);
   setupParam("shutdown_after", &shutdown_after);
+
+  setupParam("use_latest_transform", &use_latest_transform);
+  setupParam("transform_lookup_timeout", &transform_lookup_timeout);
 }
 
 MotionDetector::MotionDetector(const ros::NodeHandle& nh,
@@ -201,6 +204,25 @@ void MotionDetector::pointcloudCallback(
   }
 }
 
+// bool MotionDetector::lookupTransform(const std::string& target_frame,
+//                                      const std::string& source_frame,
+//                                      uint64_t timestamp,
+//                                      tf::StampedTransform& result) const {
+//   ros::Time timestamp_ros;
+//   timestamp_ros.fromNSec(timestamp);
+
+//   // Note(schmluk): We could also wait for transforms here but this is easier
+//   // and faster atm.
+//   try {
+//     tf_listener_.lookupTransform(target_frame, source_frame, timestamp_ros,
+//                                  result);
+//   } catch (tf::TransformException& ex) {
+//     LOG(WARNING) << "Could not get sensor transform, skipping pointcloud: "
+//                  << ex.what();
+//     return false;
+//   }
+//   return true;
+// }
 bool MotionDetector::lookupTransform(const std::string& target_frame,
                                      const std::string& source_frame,
                                      uint64_t timestamp,
@@ -208,17 +230,26 @@ bool MotionDetector::lookupTransform(const std::string& target_frame,
   ros::Time timestamp_ros;
   timestamp_ros.fromNSec(timestamp);
 
-  // Note(schmluk): We could also wait for transforms here but this is easier
-  // and faster atm.
   try {
-    tf_listener_.lookupTransform(target_frame, source_frame, timestamp_ros,
-                                 result);
+    // Wait for transform to be available with a timeout
+    if (tf_listener_.waitForTransform(target_frame, source_frame, timestamp_ros, 
+                                     ros::Duration(config_.transform_lookup_timeout))) {
+      tf_listener_.lookupTransform(target_frame, source_frame, timestamp_ros, result);
+      return true;
+    } else if (config_.use_latest_transform) {
+      if (config_.verbose) {
+        ROS_WARN_STREAM("Could not get transform at exact timestamp, using latest available transform");
+      }
+      tf_listener_.lookupTransform(target_frame, source_frame, ros::Time(0), result);
+      return true;
+    } else {
+      LOG(WARNING) << "Could not get sensor transform within timeout, skipping pointcloud";
+      return false;
+    }
   } catch (tf::TransformException& ex) {
-    LOG(WARNING) << "Could not get sensor transform, skipping pointcloud: "
-                 << ex.what();
+    LOG(WARNING) << "Could not get sensor transform, skipping pointcloud: " << ex.what();
     return false;
   }
-  return true;
 }
 
 void MotionDetector::setUpPointMap(

@@ -75,3 +75,5 @@ voxblox:
   max_ray_length_m: *max_range
   use_const_weight: true
   verbose: false
+
+global_frame_name: lidarMap
