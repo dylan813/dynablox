@@ -61,29 +61,71 @@ struct BoundingBox {
   Point min_corner;
   Point max_corner;
 
+  bool isValid() const {
+    // Check for NaN values first
+    if (std::isnan(min_corner.x) || std::isnan(min_corner.y) || std::isnan(min_corner.z) ||
+        std::isnan(max_corner.x) || std::isnan(max_corner.y) || std::isnan(max_corner.z)) {
+      return false;
+    }
+    // Check for infinite values
+    if (std::isinf(min_corner.x) || std::isinf(min_corner.y) || std::isinf(min_corner.z) ||
+        std::isinf(max_corner.x) || std::isinf(max_corner.y) || std::isinf(max_corner.z)) {
+      return false;
+    }
+    return min_corner.x <= max_corner.x && 
+           min_corner.y <= max_corner.y && 
+           min_corner.z <= max_corner.z;
+  }
+
+  void makeValid() {
+    // Handle NaN values
+    if (std::isnan(min_corner.x) || std::isnan(max_corner.x)) {
+      min_corner.x = max_corner.x = 0.0f;
+    }
+    if (std::isnan(min_corner.y) || std::isnan(max_corner.y)) {
+      min_corner.y = max_corner.y = 0.0f;
+    }
+    if (std::isnan(min_corner.z) || std::isnan(max_corner.z)) {
+      min_corner.z = max_corner.z = 0.0f;
+    }
+
+    // Handle infinite values
+    if (std::isinf(min_corner.x) || std::isinf(max_corner.x)) {
+      min_corner.x = max_corner.x = 0.0f;
+    }
+    if (std::isinf(min_corner.y) || std::isinf(max_corner.y)) {
+      min_corner.y = max_corner.y = 0.0f;
+    }
+    if (std::isinf(min_corner.z) || std::isinf(max_corner.z)) {
+      min_corner.z = max_corner.z = 0.0f;
+    }
+
+    // Fix invalid dimensions
+    for (int i = 0; i < 3; ++i) {
+      float& min_val = min_corner.data[i];
+      float& max_val = max_corner.data[i];
+      if (min_val > max_val) {
+        float avg = (min_val + max_val) * 0.5f;
+        min_val = max_val = avg;
+      }
+    }
+  }
+
   bool intersects(const BoundingBox& other, const float margin = 0.f) const {
-    if (min_corner.x - margin > other.max_corner.x) {
-      return false;
-    }
-    if (min_corner.y - margin > other.max_corner.y) {
-      return false;
-    }
-    if (min_corner.z - margin > other.max_corner.x) {
-      return false;
-    }
-    if (max_corner.x + margin < other.min_corner.x) {
-      return false;
-    }
-    if (max_corner.y + margin < other.min_corner.y) {
-      return false;
-    }
-    if (max_corner.z + margin < other.min_corner.z) {
-      return false;
-    }
+    // Fix: Changed other.max_corner.x to other.max_corner.z in z-axis check
+    if (min_corner.x - margin > other.max_corner.x) return false;
+    if (min_corner.y - margin > other.max_corner.y) return false;
+    if (min_corner.z - margin > other.max_corner.z) return false; // Fixed this line
+    if (max_corner.x + margin < other.min_corner.x) return false;
+    if (max_corner.y + margin < other.min_corner.y) return false;
+    if (max_corner.z + margin < other.min_corner.z) return false;
     return true;
   }
 
   float extent() const {
+    if (!isValid()) {
+      return 0.0f;
+    }
     return (max_corner.getVector3fMap() - min_corner.getVector3fMap()).norm();
   }
 };

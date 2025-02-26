@@ -147,6 +147,15 @@ class MotionVisualizer {
       const ros::Publisher& pub, const std::string& ns) const;
 
   ros::Time getStamp() const;
+
+  /**
+   * @brief Check if an AABB is valid (min corner <= max corner in all dimensions)
+   * @param min_vec The minimum corner vector
+   * @param max_vec The maximum corner vector
+   * @return true if the AABB is valid, false otherwise
+   */
+  bool isValidAABB(const Eigen::Vector3f& min_vec, 
+                   const Eigen::Vector3f& max_vec) const;
 };
 
 }  // namespace dynablox

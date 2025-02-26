@@ -64,10 +64,18 @@ void MotionVisualizer::Config::checkColor(const std::vector<float>& color,
 MotionVisualizer::MotionVisualizer(ros::NodeHandle nh,
                                    std::shared_ptr<TsdfLayer> tsdf_layer)
     : config_(config_utilities::getConfigFromRos<MotionVisualizer::Config>(nh)
-                  .checkValid()),
+                 .checkValid()),
       nh_(std::move(nh)),
       tsdf_layer_(std::move(tsdf_layer)) {
+  // Initialize color map
   color_map_.setItemsPerRevolution(config_.color_wheel_num_colors);
+
+  // Ensure frame_id is consistent
+  if (config_.global_frame_name != "map") {
+    ROS_WARN_STREAM("Frame ID mismatch. RViz expects 'map' but config specifies '" 
+                    << config_.global_frame_name << "'. This may cause visualization issues.");
+  }
+
   // Setup mesh integrator.
   mesh_layer_ = std::make_shared<voxblox::MeshLayer>(tsdf_layer_->block_size());
   voxblox::MeshIntegratorConfig mesh_config;
@@ -79,6 +87,15 @@ MotionVisualizer::MotionVisualizer(ros::NodeHandle nh,
 }
 
 void MotionVisualizer::setupRos() {
+  ROS_DEBUG("Setting up ROS publishers");
+  
+  // Initialize publishers with queue size
+  cluster_vis_pub_ =
+      nh_.advertise<visualization_msgs::MarkerArray>("visualization/clusters", 1);
+  
+  ROS_DEBUG_STREAM("Cluster visualization publisher created with topic: " 
+                   << cluster_vis_pub_.getTopic());
+  
   // Advertise all topics.
   const int queue_size = 10;
   sensor_pose_pub_ =
@@ -116,8 +133,6 @@ void MotionVisualizer::setupRos() {
       nh_.advertise<pcl::PointCloud<pcl::PointXYZI>>("slice/tsdf", queue_size);
   point_slice_pub_ =
       nh_.advertise<visualization_msgs::Marker>("slice/points", queue_size);
-  cluster_vis_pub_ =
-      nh_.advertise<visualization_msgs::MarkerArray>("clusters", queue_size);
 }
 
 void MotionVisualizer::visualizeAll(const Cloud& cloud,
@@ -145,82 +160,134 @@ void MotionVisualizer::visualizeAll(const Cloud& cloud,
 }
 
 void MotionVisualizer::visualizeClusters(const Clusters& clusters,
-                                         const std::string& ns) const {
+                                        const std::string& ns) const {
   if (cluster_vis_pub_.getNumSubscribers() == 0u) {
+    ROS_DEBUG("No subscribers to cluster visualization");
     return;
   }
 
-  // Visualize Bbox.
-  visualization_msgs::MarkerArray array_msg;
+  // Add debug logging
+  if (ros::console::set_logger_level(ROSCONSOLE_DEFAULT_NAME, ros::console::levels::Debug)) {
+    ros::console::notifyLoggerLevelsChanged();
+  }
 
+  ROS_DEBUG_STREAM("Visualizing " << clusters.size() << " clusters");
+  
+  visualization_msgs::MarkerArray array_msg;
   size_t id = 0;
+  size_t valid_clusters = 0;
+
   for (const Cluster& cluster : clusters) {
-    if (cluster.points.size() > 1u) {
-      visualization_msgs::Marker msg;
-      msg.action = visualization_msgs::Marker::ADD;
-      msg.id = id++;
-      msg.ns = ns;
-      msg.header.stamp = getStamp();
-      msg.header.frame_id = config_.global_frame_name;
-      msg.type = visualization_msgs::Marker::LINE_LIST;
-      msg.color = setColor(color_map_.colorLookup(cluster.id));
-      msg.scale.x = config_.cluster_line_width;
-      msg.pose.orientation.w = 1.f;
-      const Eigen::Vector3f base = cluster.aabb.min_corner.getVector3fMap();
-      const Eigen::Vector3f delta = cluster.aabb.max_corner.getVector3fMap() - base;
+    ROS_DEBUG_STREAM("Cluster " << cluster.id << " has " << cluster.points.size() << " points");
+    
+    if (!cluster.points.empty()) {
+      if (!cluster.aabb.isValid()) {
+        ROS_WARN_STREAM("Cluster " << cluster.id << " has invalid AABB");
+        continue;
+      }
+
+      const auto& min = cluster.aabb.min_corner;
+      const auto& max = cluster.aabb.max_corner;
+      const Eigen::Vector3f min_vec = min.getVector3fMap();
+      const Eigen::Vector3f max_vec = max.getVector3fMap();
+
+      ROS_DEBUG_STREAM("Cluster " << cluster.id 
+                      << "\nMin corner: (" << min_vec.transpose() << ")"
+                      << "\nMax corner: (" << max_vec.transpose() << ")"
+                      << "\nNum points: " << cluster.points.size()
+                      << "\nFrame ID: " << config_.global_frame_name);
+
+      // Additional validation before visualization
+      if (!isValidAABB(min_vec, max_vec)) {
+        ROS_WARN_STREAM("Invalid AABB detected before visualization: min(" 
+                       << min_vec.transpose() << ") max(" << max_vec.transpose() << ")");
+        continue;
+      }
+
+      valid_clusters++;
+      // Create visualization marker
+      visualization_msgs::Marker box_msg;
+      box_msg.header.frame_id = config_.global_frame_name;  // Use configured frame
+      box_msg.header.stamp = getStamp();
+      box_msg.ns = ns;
+      box_msg.id = id++;
+      box_msg.type = visualization_msgs::Marker::LINE_LIST;
+      box_msg.action = visualization_msgs::Marker::ADD;
+      box_msg.pose.orientation.w = 1.0;
+      box_msg.scale.x = config_.cluster_line_width;
+      box_msg.color = setColor(color_map_.colorLookup(cluster.id));
+
+      // Validate transformed points
+      const Eigen::Vector3f base = min_vec;
+      const Eigen::Vector3f delta = max_vec - base;
+      
+      if (delta.minCoeff() < 0) {
+        ROS_WARN("Invalid box dimensions after transform");
+        continue;
+      }
+
+      // Box corners calculation
       const Eigen::Vector3f dx = delta.cwiseProduct(Eigen::Vector3f::UnitX());
       const Eigen::Vector3f dy = delta.cwiseProduct(Eigen::Vector3f::UnitY());
       const Eigen::Vector3f dz = delta.cwiseProduct(Eigen::Vector3f::UnitZ());
 
-      // All points of the box.
-      msg.points.push_back(setPoint(base));
-      msg.points.push_back(setPoint(base + dx));
-      msg.points.push_back(setPoint(base));
-      msg.points.push_back(setPoint(base + dy));
-      msg.points.push_back(setPoint(base + dx));
-      msg.points.push_back(setPoint(base + dx + dy));
-      msg.points.push_back(setPoint(base + dy));
-      msg.points.push_back(setPoint(base + dx + dy));
+      // Add box lines
+      box_msg.points.push_back(setPoint(base));
+      box_msg.points.push_back(setPoint(base + dx));
+      box_msg.points.push_back(setPoint(base));
+      box_msg.points.push_back(setPoint(base + dy));
+      box_msg.points.push_back(setPoint(base + dx));
+      box_msg.points.push_back(setPoint(base + dx + dy));
+      box_msg.points.push_back(setPoint(base + dy));
+      box_msg.points.push_back(setPoint(base + dx + dy));
 
-      msg.points.push_back(setPoint(base + dz));
-      msg.points.push_back(setPoint(base + dx + dz));
-      msg.points.push_back(setPoint(base + dz));
-      msg.points.push_back(setPoint(base + dy + dz));
-      msg.points.push_back(setPoint(base + dx + dz));
-      msg.points.push_back(setPoint(base + dx + dy + dz));
-      msg.points.push_back(setPoint(base + dy + dz));
-      msg.points.push_back(setPoint(base + dx + dy + dz));
+      box_msg.points.push_back(setPoint(base + dz));
+      box_msg.points.push_back(setPoint(base + dx + dz));
+      box_msg.points.push_back(setPoint(base + dz));
+      box_msg.points.push_back(setPoint(base + dy + dz));
+      box_msg.points.push_back(setPoint(base + dx + dz));
+      box_msg.points.push_back(setPoint(base + dx + dy + dz));
+      box_msg.points.push_back(setPoint(base + dy + dz));
+      box_msg.points.push_back(setPoint(base + dx + dy + dz));
 
-      msg.points.push_back(setPoint(base));
-      msg.points.push_back(setPoint(base + dz));
-      msg.points.push_back(setPoint(base + dx));
-      msg.points.push_back(setPoint(base + dx + dz));
-      msg.points.push_back(setPoint(base + dy));
-      msg.points.push_back(setPoint(base + dy + dz));
-      msg.points.push_back(setPoint(base + dx + dy));
-      msg.points.push_back(setPoint(base + dx + dy + dz));
-      array_msg.markers.push_back(msg);
+      box_msg.points.push_back(setPoint(base));
+      box_msg.points.push_back(setPoint(base + dz));
+      box_msg.points.push_back(setPoint(base + dx));
+      box_msg.points.push_back(setPoint(base + dx + dz));
+      box_msg.points.push_back(setPoint(base + dy));
+      box_msg.points.push_back(setPoint(base + dy + dz));
+      box_msg.points.push_back(setPoint(base + dx + dy));
+      box_msg.points.push_back(setPoint(base + dx + dy + dz));
+      array_msg.markers.push_back(box_msg);
+
+      // Text label
+      visualization_msgs::Marker text_msg;
+      text_msg.action = visualization_msgs::Marker::ADD;
+      text_msg.id = id++;
+      text_msg.ns = ns;
+      text_msg.header.stamp = getStamp();
+      text_msg.header.frame_id = config_.global_frame_name;
+      text_msg.color = setColor(color_map_.colorLookup(cluster.id));
+      text_msg.type = visualization_msgs::Marker::TEXT_VIEW_FACING;
+      text_msg.scale.z = 0.5;
+      text_msg.pose.position = setPoint(max_vec);  // Use validated max vector
+      text_msg.pose.orientation.w = 1.f;
+      
+      std::stringstream stream;
+      stream << cluster.points.size() << "pts - " << std::fixed
+             << std::setprecision(1) << delta.norm() << "m";
+      text_msg.text = stream.str();
+      array_msg.markers.push_back(text_msg);
     }
-    visualization_msgs::Marker msg;
-    msg.action = visualization_msgs::Marker::ADD;
-    msg.id = id++;
-    msg.ns = ns;
-    msg.header.stamp = getStamp();
-    msg.header.frame_id = config_.global_frame_name;
-    msg.color = setColor(color_map_.colorLookup(cluster.id));
-    msg.type = visualization_msgs::Marker::TEXT_VIEW_FACING;
-    msg.scale.z = 0.5;
-    msg.pose.position = setPoint(cluster.aabb.max_corner);
-    msg.pose.orientation.w = 1.f;
-    const float extent = cluster.aabb.extent();
-    std::stringstream stream;
-    stream << cluster.points.size() << "pts - " << std::fixed
-           << std::setprecision(1) << extent << "m";
-    msg.text = stream.str();
-    array_msg.markers.push_back(msg);
   }
+
+  ROS_DEBUG_STREAM("Publishing " << array_msg.markers.size() 
+                  << " markers for " << valid_clusters << " valid clusters");
+
   if (!array_msg.markers.empty()) {
     cluster_vis_pub_.publish(array_msg);
+  } else {
+    ROS_WARN("No valid markers to publish");
   }
 }
 
@@ -669,19 +736,30 @@ void MotionVisualizer::visualizeClusterDetections(
   // Get all cluster points.
   int i = 0;
   for (const Cluster& cluster : clusters) {
-    std_msgs::ColorRGBA color;
-    if (config_.color_clusters) {
-      color = setColor(color_map_.colorLookup(i));
-      ++i;
-    } else {
-      color = setColor(config_.dynamic_point_color);
-    }
-    for (int index : cluster.points) {
-      if (          cloud[index].z > config_.visualization_max_z) {
-        continue;
-      }
-      result.points.push_back(setPoint(cloud[index]));
-      result.colors.push_back(color);
+    if (!cluster.points.empty() && cluster.aabb.isValid()) {
+        const auto& min = cluster.aabb.min_corner;
+        const auto& max = cluster.aabb.max_corner;
+        const Eigen::Vector3f min_vec = min.getVector3fMap();
+        const Eigen::Vector3f max_vec = max.getVector3fMap();
+        
+        if (isValidAABB(min_vec, max_vec)) {
+            std_msgs::ColorRGBA color;
+            if (config_.color_clusters) {
+                color = setColor(color_map_.colorLookup(i));
+                ++i;
+            } else {
+                color = setColor(config_.dynamic_point_color);
+            }
+            for (int index : cluster.points) {
+                if (          cloud[index].z > config_.visualization_max_z) {
+                    continue;
+                }
+                result.points.push_back(setPoint(cloud[index]));
+                result.colors.push_back(color);
+            }
+        } else {
+            ROS_WARN("Invalid AABB detected in cluster detection");
+        }
     }
   }
 
@@ -742,22 +820,29 @@ void MotionVisualizer::visualizeObjectDetections(
 
   // Get all cluster points.
   for (const Cluster& cluster : clusters) {
-    if (!cluster.valid) {
-      continue;
-    }
-    std_msgs::ColorRGBA color;
-    if (config_.color_clusters) {
-      color = setColor(color_map_.colorLookup(cluster.id));
-    } else {
-      color = setColor(config_.dynamic_point_color);
-    }
-
-    for (int index : cluster.points) {
-      if (          cloud[index].z > config_.visualization_max_z) {
-        continue;
-      }
-      result.points.push_back(setPoint(cloud[index]));
-      result.colors.push_back(color);
+    if (cluster.valid && !cluster.points.empty() && cluster.aabb.isValid()) {
+        const auto& min = cluster.aabb.min_corner;
+        const auto& max = cluster.aabb.max_corner;
+        const Eigen::Vector3f min_vec = min.getVector3fMap();
+        const Eigen::Vector3f max_vec = max.getVector3fMap();
+        
+        if (isValidAABB(min_vec, max_vec)) {
+            std_msgs::ColorRGBA color;
+            if (config_.color_clusters) {
+                color = setColor(color_map_.colorLookup(cluster.id));
+            } else {
+                color = setColor(config_.dynamic_point_color);
+            }
+            for (int index : cluster.points) {
+                if (          cloud[index].z > config_.visualization_max_z) {
+                    continue;
+                }
+                result.points.push_back(setPoint(cloud[index]));
+                result.colors.push_back(color);
+            }
+        } else {
+            ROS_WARN("Invalid AABB detected in object detection");
+        }
     }
   }
 
@@ -846,6 +931,12 @@ ros::Time MotionVisualizer::getStamp() const {
   } else {
     return ros::Time::now();
   }
+}
+
+bool MotionVisualizer::isValidAABB(const Eigen::Vector3f& min_vec, const Eigen::Vector3f& max_vec) const {
+    return min_vec.x() <= max_vec.x() && 
+           min_vec.y() <= max_vec.y() && 
+           min_vec.z() <= max_vec.z();
 }
 
 }  // namespace dynablox

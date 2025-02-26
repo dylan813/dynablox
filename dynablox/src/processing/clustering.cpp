@@ -178,32 +178,43 @@ Clusters Clustering::inducePointClusters(
 
 void Clustering::computeAABB(const Cloud& cloud, Cluster& cluster) const {
   if (cluster.points.empty()) {
+    cluster.aabb.min_corner = Point(0.0f, 0.0f, 0.0f);
+    cluster.aabb.max_corner = Point(0.0f, 0.0f, 0.0f);
     return;
   }
+
   Point& min = cluster.aabb.min_corner;
   Point& max = cluster.aabb.max_corner;
+
   if (config_.check_cluster_separation_exact) {
-    // Compute the exact AABB from points.
-    min = cloud[cluster.points[0]];
-    max = cloud[cluster.points[0]];
+    // Initialize with first point
+    const Point& first_point = cloud[cluster.points[0]];
+    if (std::isfinite(first_point.x) && std::isfinite(first_point.y) && std::isfinite(first_point.z)) {
+      min = max = first_point;
+    } else {
+      min = max = Point(0.0f, 0.0f, 0.0f);
+    }
+
+    // Update with remaining points
     for (size_t i = 1; i < cluster.points.size(); ++i) {
       const Point& point = cloud[cluster.points[i]];
-      min.x = std::min(min.x, point.x);
-      min.y = std::min(min.y, point.y);
-      min.z = std::min(min.z, point.z);
-      max.x = std::max(max.x, point.x);
-      max.y = std::max(max.y, point.y);
-      max.z = std::max(max.z, point.z);
+      if (std::isfinite(point.x)) min.x = std::min(min.x, point.x);
+      if (std::isfinite(point.x)) max.x = std::max(max.x, point.x);
+      if (std::isfinite(point.y)) min.y = std::min(min.y, point.y);
+      if (std::isfinite(point.y)) max.y = std::max(max.y, point.y);
+      if (std::isfinite(point.z)) min.z = std::min(min.z, point.z);
+      if (std::isfinite(point.z)) max.z = std::max(max.z, point.z);
     }
   } else {
-    // Approximate the AABB from voxels.
+    // Approximate the AABB from voxels
     const float voxel_size = tsdf_layer_->voxel_size();
     min = Point(std::numeric_limits<float>::max(),
                 std::numeric_limits<float>::max(),
                 std::numeric_limits<float>::max());
-    max = Point(std::numeric_limits<float>::lowest(),
-                std::numeric_limits<float>::lowest(),
-                std::numeric_limits<float>::lowest());
+    max = Point(-std::numeric_limits<float>::max(),
+                -std::numeric_limits<float>::max(),
+                -std::numeric_limits<float>::max());
+
     for (const Point& point : cluster.voxels) {
       min.x = std::min(min.x, point.x);
       min.y = std::min(min.y, point.y);
@@ -212,12 +223,20 @@ void Clustering::computeAABB(const Cloud& cloud, Cluster& cluster) const {
       max.y = std::max(max.y, point.y);
       max.z = std::max(max.z, point.z);
     }
+
+    // Add voxel size margin
     min.x -= 0.5f * voxel_size;
     min.y -= 0.5f * voxel_size;
     min.z -= 0.5f * voxel_size;
     max.x += 0.5f * voxel_size;
     max.y += 0.5f * voxel_size;
     max.z += 0.5f * voxel_size;
+  }
+
+  // Ensure AABB is valid
+  if (!cluster.aabb.isValid()) {
+    ROS_WARN("Invalid AABB detected during computation, forcing valid bounds");
+    cluster.aabb.makeValid();
   }
 }
 
