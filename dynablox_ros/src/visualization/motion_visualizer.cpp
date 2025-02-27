@@ -742,7 +742,7 @@ void MotionVisualizer::visualizeObjectDetections(
 
   // Get all cluster points.
   for (const Cluster& cluster : clusters) {
-    if (!cluster.valid) {
+    if (!cluster.valid || cluster.points.empty()) {
       continue;
     }
     std_msgs::ColorRGBA color;
@@ -753,7 +753,8 @@ void MotionVisualizer::visualizeObjectDetections(
     }
 
     for (int index : cluster.points) {
-      if (          cloud[index].z > config_.visualization_max_z) {
+      if (index < 0 || index >= static_cast<int>(cloud.points.size()) || 
+          cloud[index].z > config_.visualization_max_z) {
         continue;
       }
       result.points.push_back(setPoint(cloud[index]));
@@ -769,17 +770,20 @@ void MotionVisualizer::visualizeObjectDetections(
         ++i;
         continue;
       }
-      if (!cloud_info.points[i].object_level_dynamic) {
-        result_comp.points.push_back(setPoint(point));
+      if (i < cloud_info.points.size() && !cloud_info.points[i].object_level_dynamic) {
+        geometry_msgs::Point p = setPoint(point);
+        if (std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z)) {
+          result_comp.points.push_back(p);
+        }
       }
       ++i;
     }
   }
 
-  if (!result.points.empty()) {
+  if (!result.points.empty() && dynamic) {
     detection_object_pub_.publish(result);
   }
-  if (!result_comp.points.empty()) {
+  if (!result_comp.points.empty() && comp) {
     detection_object_comp_pub_.publish(result_comp);
   }
 }
