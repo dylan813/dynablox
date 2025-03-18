@@ -280,7 +280,7 @@ Visualization Manager:
               Marker Topic: /motion_detector/visualization/detections/object/static
               Name: Static
               Namespaces:
-                "": false
+                "": true
               Queue Size: 100
               Value: true
           Enabled: true
