@@ -32,6 +32,7 @@ bool Preprocessing::processPointcloud(const sensor_msgs::PointCloud2::Ptr& msg,
   cloud_info.sensor_position.x = T_M_S.getOrigin().x();
   cloud_info.sensor_position.y = T_M_S.getOrigin().y();
   cloud_info.sensor_position.z = T_M_S.getOrigin().z();
+  cloud_info.sensor_position.intensity = 0.0f;  // Set default intensity for sensor position
 
   cloud_info.points = std::vector<PointInfo>(cloud.size());
   size_t i = 0;
