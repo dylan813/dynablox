@@ -18,6 +18,7 @@
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
 #include <visualization_msgs/Marker.h>
+#include <sensor_msgs/PointCloud2.h>
 
 namespace dynablox {
 
@@ -59,6 +60,9 @@ MotionDetector::MotionDetector(const ros::NodeHandle& nh,
 
   // Advertise and subscribe to topics.
   setupRos();
+
+  // Initialize the publisher for dynamic clusters with intensity
+  eval_clusters_pub_ = nh_.advertise<sensor_msgs::PointCloud2>("eval_clusters", 1);
 
   // Print current configuration of all components.
   LOG_IF(INFO, config_.verbose) << "Configuration:\n"
@@ -202,27 +206,46 @@ void MotionDetector::pointcloudCallback(
     visualizer_->visualizeAll(cloud, cloud_info, clusters);
     vis_timer.Stop();
   }
+
+  // After processing clusters, publish them with intensity
+  if (!clusters.empty() && eval_clusters_pub_.getNumSubscribers() > 0) {
+    // Create a new point cloud for the clusters with intensity
+    pcl::PointCloud<pcl::PointXYZI>::Ptr cluster_cloud(new pcl::PointCloud<pcl::PointXYZI>);
+    
+    // For each cluster
+    for (size_t i = 0; i < clusters.size(); ++i) {
+      const auto& cluster = clusters[i];
+      
+      // For each point in the cluster
+      for (const auto& point_idx : cluster.points) {
+        pcl::PointXYZI point;
+        point.x = cloud[point_idx].x;
+        point.y = cloud[point_idx].y;
+        point.z = cloud[point_idx].z;
+        
+        // Use the original intensity from the input point cloud
+        point.intensity = cloud[point_idx].intensity;
+        
+        cluster_cloud->points.push_back(point);
+      }
+    }
+    
+    if (!cluster_cloud->empty()) {
+      cluster_cloud->width = cluster_cloud->points.size();
+      cluster_cloud->height = 1;
+      cluster_cloud->is_dense = true;
+      
+      // Convert to ROS message
+      sensor_msgs::PointCloud2 output_msg;
+      pcl::toROSMsg(*cluster_cloud, output_msg);
+      output_msg.header = msg->header;
+      
+      // Publish the clusters
+      eval_clusters_pub_.publish(output_msg);
+    }
+  }
 }
 
-// bool MotionDetector::lookupTransform(const std::string& target_frame,
-//                                      const std::string& source_frame,
-//                                      uint64_t timestamp,
-//                                      tf::StampedTransform& result) const {
-//   ros::Time timestamp_ros;
-//   timestamp_ros.fromNSec(timestamp);
-
-//   // Note(schmluk): We could also wait for transforms here but this is easier
-//   // and faster atm.
-//   try {
-//     tf_listener_.lookupTransform(target_frame, source_frame, timestamp_ros,
-//                                  result);
-//   } catch (tf::TransformException& ex) {
-//     LOG(WARNING) << "Could not get sensor transform, skipping pointcloud: "
-//                  << ex.what();
-//     return false;
-//   }
-//   return true;
-// }
 bool MotionDetector::lookupTransform(const std::string& target_frame,
                                      const std::string& source_frame,
                                      uint64_t timestamp,

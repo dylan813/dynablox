@@ -154,6 +154,9 @@ class MotionDetector {
 
   // Variables.
   int frame_counter_ = 0;
+
+  // Publisher for dynamic clusters with intensity
+  ros::Publisher eval_clusters_pub_;
 };
 
 }  // namespace dynablox
