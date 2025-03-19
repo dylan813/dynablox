@@ -260,6 +260,14 @@ void MotionDetector::pointcloudCallback(
       }
     }
     
+    // Check if we exceeded the maximum number of clusters
+    if (clusters.size() > cluster_pubs_.size()) {
+      ROS_WARN_THROTTLE(5.0, "Number of clusters (%zu) exceeds max_cluster_topics (%zu). "
+                       "Some clusters will not be published to individual topics. "
+                       "Consider increasing max_cluster_topics in the launch file.",
+                       clusters.size(), cluster_pubs_.size());
+    }
+    
     // Publish the combined cloud to eval_clusters topic
     if (!all_clusters_cloud->empty() && eval_clusters_pub_.getNumSubscribers() > 0) {
       all_clusters_cloud->width = all_clusters_cloud->points.size();
