@@ -22,5 +22,10 @@ cs_add_executable(cloud_visualizer
         )
 target_link_libraries(cloud_visualizer ${PROJECT_NAME})
 
+cs_add_executable(cluster_extractor
+        src/cluster_extractor_node.cpp
+        )
+target_link_libraries(cluster_extractor ${PROJECT_NAME})
+
 cs_install()
 cs_export()

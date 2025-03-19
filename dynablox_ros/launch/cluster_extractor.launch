@@ -1,0 +1,13 @@
+<launch>
+  <!-- Directory to save cluster files -->
+  <arg name="output_dir" default="/home/dylan/dynablox/cluster_data"/>
+  <arg name="file_prefix" default="cluster"/>
+  <arg name="save_as_bin" default="true"/>
+  
+  <!-- Run the cluster extractor node -->
+  <node pkg="dynablox_ros" type="cluster_extractor" name="cluster_extractor" output="screen">
+    <param name="output_dir" value="$(arg output_dir)"/>
+    <param name="file_prefix" value="$(arg file_prefix)"/>
+    <param name="save_as_bin" value="$(arg save_as_bin)"/>
+  </node>
+</launch> 
