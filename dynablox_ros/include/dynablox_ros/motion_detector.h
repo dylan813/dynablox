@@ -59,6 +59,9 @@ class MotionDetector {
     bool use_latest_transform = true;
     double transform_lookup_timeout = 0.1;  // seconds
 
+    /// Default max number of individual cluster topics to publish (for reference)
+    int max_cluster_topics = 20;
+
     Config() { setConfigName("MotionDetector"); }
 
    protected:
@@ -157,6 +160,9 @@ class MotionDetector {
 
   // Publisher for dynamic clusters with intensity
   ros::Publisher eval_clusters_pub_;
+
+  // In the class definition, add this to the private section:
+  std::vector<ros::Publisher> cluster_pubs_;
 };
 
 }  // namespace dynablox

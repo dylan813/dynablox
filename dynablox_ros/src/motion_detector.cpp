@@ -125,6 +125,12 @@ void MotionDetector::setupMembers() {
 void MotionDetector::setupRos() {
   lidar_pcl_sub_ = nh_.subscribe("pointcloud", config_.queue_size,
                                  &MotionDetector::pointcloudCallback, this);
+  
+  // Pre-create publishers for the configured number of clusters
+  for (int i = 0; i < config_.max_cluster_topics; i++) {
+    std::string topic_name = "cluster_" + std::to_string(i);
+    cluster_pubs_.push_back(nh_.advertise<sensor_msgs::PointCloud2>(topic_name, 1));
+  }
 }
 
 void MotionDetector::pointcloudCallback(
@@ -207,14 +213,22 @@ void MotionDetector::pointcloudCallback(
     vis_timer.Stop();
   }
 
-  // After processing clusters, publish them with intensity
-  if (!clusters.empty() && eval_clusters_pub_.getNumSubscribers() > 0) {
-    // Create a new point cloud for the clusters with intensity
-    pcl::PointCloud<pcl::PointXYZI>::Ptr cluster_cloud(new pcl::PointCloud<pcl::PointXYZI>);
+  // After processing clusters, publish them both ways
+  if (!clusters.empty()) {
+    // Create a combined point cloud for all clusters (for eval_clusters topic)
+    pcl::PointCloud<pcl::PointXYZI>::Ptr all_clusters_cloud(new pcl::PointCloud<pcl::PointXYZI>);
     
     // For each cluster
-    for (size_t i = 0; i < clusters.size(); ++i) {
+    for (size_t i = 0; i < clusters.size() && i < cluster_pubs_.size(); ++i) {
       const auto& cluster = clusters[i];
+      
+      // Skip empty clusters
+      if (cluster.points.empty()) {
+        continue;
+      }
+      
+      // Create a point cloud for this cluster
+      pcl::PointCloud<pcl::PointXYZI>::Ptr cluster_cloud(new pcl::PointCloud<pcl::PointXYZI>);
       
       // For each point in the cluster
       for (const auto& point_idx : cluster.points) {
@@ -222,26 +236,41 @@ void MotionDetector::pointcloudCallback(
         point.x = cloud[point_idx].x;
         point.y = cloud[point_idx].y;
         point.z = cloud[point_idx].z;
-        
-        // Use the original intensity from the input point cloud
         point.intensity = cloud[point_idx].intensity;
         
+        // Add to individual cluster cloud
         cluster_cloud->points.push_back(point);
+        
+        // Also add to combined cloud
+        all_clusters_cloud->points.push_back(point);
+      }
+      
+      if (!cluster_cloud->empty()) {
+        cluster_cloud->width = cluster_cloud->points.size();
+        cluster_cloud->height = 1;
+        cluster_cloud->is_dense = true;
+        
+        // Convert to ROS message
+        sensor_msgs::PointCloud2 output_msg;
+        pcl::toROSMsg(*cluster_cloud, output_msg);
+        output_msg.header = msg->header;
+        
+        // Publish the cluster to its dedicated topic
+        cluster_pubs_[i].publish(output_msg);
       }
     }
     
-    if (!cluster_cloud->empty()) {
-      cluster_cloud->width = cluster_cloud->points.size();
-      cluster_cloud->height = 1;
-      cluster_cloud->is_dense = true;
+    // Publish the combined cloud to eval_clusters topic
+    if (!all_clusters_cloud->empty() && eval_clusters_pub_.getNumSubscribers() > 0) {
+      all_clusters_cloud->width = all_clusters_cloud->points.size();
+      all_clusters_cloud->height = 1;
+      all_clusters_cloud->is_dense = true;
       
-      // Convert to ROS message
-      sensor_msgs::PointCloud2 output_msg;
-      pcl::toROSMsg(*cluster_cloud, output_msg);
-      output_msg.header = msg->header;
+      sensor_msgs::PointCloud2 combined_msg;
+      pcl::toROSMsg(*all_clusters_cloud, combined_msg);
+      combined_msg.header = msg->header;
       
-      // Publish the clusters
-      eval_clusters_pub_.publish(output_msg);
+      eval_clusters_pub_.publish(combined_msg);
     }
   }
 }

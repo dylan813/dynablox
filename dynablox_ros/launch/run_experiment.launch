@@ -19,8 +19,12 @@
   <arg name="config_file" default="motion_detector/default.yaml" />  <!-- Configuration of Dynablox -->
   <arg name="visualize" default="true" />  <!-- Whether to display RVIZ visualizations -->
   
-  
-  
+  <!-- Cluster Extractor -->
+  <arg name="max_cluster_topics" default="20"/>
+  <arg name="run_cluster_extractor" default="true"/>
+  <arg name="cluster_output_dir" default="/home/dylan/dynablox/cluster_data"/>
+  <arg name="cluster_file_prefix" default="cluster"/>
+  <arg name="save_clusters_as_bin" default="true"/>
   
   <!-- ========== Run Nodes ========== -->
   <!-- Auto-generated arguments -->
@@ -47,6 +51,17 @@
     <param name="evaluation/ground_truth/file_path" value="$(arg ground_truth_file)" />
     <param name="evaluation/output_directory" value="$(arg eval_output_path)" />
     <param name="evaluate" value="$(arg evaluate)" />    
+
+    <!-- max_cluster_topics parameter -->
+    <param name="max_cluster_topics" value="$(arg max_cluster_topics)"/>
+  </node>
+  
+  <!-- Use Cluster Extractor if set to True -->
+  <node pkg="dynablox_ros" type="cluster_extractor" name="cluster_extractor" output="screen" if="$(arg run_cluster_extractor)">
+    <param name="output_dir" value="$(arg cluster_output_dir)"/>
+    <param name="file_prefix" value="$(arg cluster_file_prefix)"/>
+    <param name="save_as_bin" value="$(arg save_clusters_as_bin)"/>
+    <param name="num_clusters" value="$(arg max_cluster_topics)"/>
   </node>
   
   <!-- Visualize -->
