@@ -21,7 +21,7 @@ ever_free_integrator:
   
 # Clustering.
 clustering:
-  min_cluster_size: 20
+  min_cluster_size: 50
   max_cluster_size: 200000
   min_extent: 0   # m
   max_extent: 200000   # m
