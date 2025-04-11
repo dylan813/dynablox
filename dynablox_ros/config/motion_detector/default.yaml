@@ -69,8 +69,8 @@ voxblox:
   # Integration.
   method: projective
   sensor_horizontal_resolution: 2048
-  sensor_vertical_resolution: 64
-  sensor_vertical_field_of_view_degrees: 33.22222
+  sensor_vertical_resolution: 128
+  sensor_vertical_field_of_view_degrees: 45
   min_ray_length_m: *min_range
   max_ray_length_m: *max_range
   use_const_weight: true
