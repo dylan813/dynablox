@@ -163,8 +163,12 @@ Clusters Clustering::inducePointClusters(
           voxblox::getGlobalVoxelIndexFromBlockAndVoxelIndex(
               voxel_key.first, voxel_key.second, voxels_per_side),
           voxel_size);
-      candidate_cluster.voxels.push_back(
-          Point(center.x(), center.y(), center.z()));
+      Point voxel_point;
+      voxel_point.x = center.x();
+      voxel_point.y = center.y();
+      voxel_point.z = center.z();
+      voxel_point.intensity = 0.0f;  // Default intensity
+      candidate_cluster.voxels.push_back(voxel_point);
 
       // Add all points.
       for (const auto& point_index : voxel_it->second) {
@@ -198,12 +202,18 @@ void Clustering::computeAABB(const Cloud& cloud, Cluster& cluster) const {
   } else {
     // Approximate the AABB from voxels.
     const float voxel_size = tsdf_layer_->voxel_size();
-    min = Point(std::numeric_limits<float>::max(),
-                std::numeric_limits<float>::max(),
-                std::numeric_limits<float>::max());
-    max = Point(std::numeric_limits<float>::lowest(),
-                std::numeric_limits<float>::lowest(),
-                std::numeric_limits<float>::lowest());
+    Point min;
+    min.x = std::numeric_limits<float>::max();
+    min.y = std::numeric_limits<float>::max();
+    min.z = std::numeric_limits<float>::max();
+    min.intensity = 0.0f;
+
+    Point max;
+    max.x = std::numeric_limits<float>::lowest();
+    max.y = std::numeric_limits<float>::lowest();
+    max.z = std::numeric_limits<float>::lowest();
+    max.intensity = 0.0f;
+
     for (const Point& point : cluster.voxels) {
       min.x = std::min(min.x, point.x);
       min.y = std::min(min.y, point.y);

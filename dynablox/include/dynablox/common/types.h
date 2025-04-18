@@ -12,7 +12,7 @@
 
 namespace dynablox {
 
-using Point = pcl::PointXYZ;
+using Point = pcl::PointXYZI;
 using Cloud = pcl::PointCloud<Point>;
 
 using VoxelIndex = voxblox::VoxelIndex;
