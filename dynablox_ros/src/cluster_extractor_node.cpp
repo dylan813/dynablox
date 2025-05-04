@@ -19,16 +19,13 @@ public:
   ClusterExtractor(const ros::NodeHandle& nh, const ros::NodeHandle& nh_private) 
     : nh_(nh), nh_private_(nh_private), frame_count_(0) {
     
-    // Get parameters
     nh_private_.param<std::string>("output_dir", output_dir_, "/tmp/clusters");
     nh_private_.param<std::string>("file_prefix", file_prefix_, "cluster");
     nh_private_.param<bool>("save_as_bin", save_as_bin_, true);
     nh_private_.param<int>("num_clusters", num_clusters_, 20);
     
-    // Create output directory if it doesn't exist
     createDirectory(output_dir_);
     
-    // Create subscribers for each cluster topic
     for (int i = 0; i < num_clusters_; i++) {
       std::string topic_name = "cluster_" + std::to_string(i);
       cluster_subs_.push_back(
@@ -44,10 +41,8 @@ public:
 
 private:
   bool createDirectory(const std::string& path) {
-    // Check if directory exists
     struct stat st = {0};
     if (stat(path.c_str(), &st) == -1) {
-      // Directory doesn't exist, create it
       if (mkdir(path.c_str(), 0755) == -1) {
         ROS_ERROR("Failed to create directory %s: %s", 
                   path.c_str(), strerror(errno));
@@ -58,45 +53,37 @@ private:
     return true;
   }
 
-  // Callback for each cluster topic
   void clusterCallback(const sensor_msgs::PointCloud2::ConstPtr& msg, int cluster_id) {
-    // Convert ROS message to PCL point cloud
     pcl::PointCloud<pcl::PointXYZI>::Ptr cluster(new pcl::PointCloud<pcl::PointXYZI>);
     pcl::fromROSMsg(*msg, *cluster);
     
-    // Set width and height
     cluster->width = cluster->points.size();
     cluster->height = 1;
     cluster->is_dense = true;
     
-    // Create filename with frame number and cluster ID
     std::stringstream ss;
     ss << output_dir_ << "/" << file_prefix_ << "_frame_" 
        << std::setw(6) << std::setfill('0') << frame_count_ 
        << "_cluster_" << cluster_id;
     
     if (save_as_bin_) {
-      // Save as binary file
       std::string bin_filename = ss.str() + ".bin";
       saveToBinary(cluster, bin_filename);
       ROS_INFO("Saved cluster %d with %zu points to %s", 
                cluster_id, cluster->points.size(), bin_filename.c_str());
     } else {
-      // Save as PCD file
       std::string pcd_filename = ss.str() + ".pcd";
       pcl::io::savePCDFile(pcd_filename, *cluster);
       ROS_INFO("Saved cluster %d with %zu points to %s", 
                cluster_id, cluster->points.size(), pcd_filename.c_str());
     }
     
-    // Increment frame counter only for the first cluster to avoid duplicates
     if (cluster_id == 0) {
       frame_count_++;
     }
   }
   
   void saveToBinary(const pcl::PointCloud<pcl::PointXYZI>::Ptr& cloud, const std::string& filename) {
-    // Open binary file for writing
     std::ofstream file(filename.c_str(), std::ios::out | std::ios::binary);
     
     if (!file.is_open()) {
@@ -104,7 +91,6 @@ private:
       return;
     }
     
-    // Write each point as x,y,z,intensity (4 floats = 16 bytes per point)
     for (const auto& point : cloud->points) {
       file.write(reinterpret_cast<const char*>(&point.x), sizeof(float));
       file.write(reinterpret_cast<const char*>(&point.y), sizeof(float));

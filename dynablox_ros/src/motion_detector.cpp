@@ -61,9 +61,6 @@ MotionDetector::MotionDetector(const ros::NodeHandle& nh,
   // Advertise and subscribe to topics.
   setupRos();
 
-  // Initialize the publisher for dynamic clusters with intensity
-  eval_clusters_pub_ = nh_.advertise<sensor_msgs::PointCloud2>("eval_clusters", 1);
-
   // Print current configuration of all components.
   LOG_IF(INFO, config_.verbose) << "Configuration:\n"
                                 << config_utilities::Global::printAllConfigs();
@@ -215,9 +212,6 @@ void MotionDetector::pointcloudCallback(
 
   // After processing clusters, publish them both ways
   if (!clusters.empty()) {
-    // Create a combined point cloud for all clusters (for eval_clusters topic)
-    pcl::PointCloud<pcl::PointXYZI>::Ptr all_clusters_cloud(new pcl::PointCloud<pcl::PointXYZI>);
-    
     // For each cluster
     for (size_t i = 0; i < clusters.size() && i < cluster_pubs_.size(); ++i) {
       const auto& cluster = clusters[i];
@@ -240,9 +234,6 @@ void MotionDetector::pointcloudCallback(
         
         // Add to individual cluster cloud
         cluster_cloud->points.push_back(point);
-        
-        // Also add to combined cloud
-        all_clusters_cloud->points.push_back(point);
       }
       
       if (!cluster_cloud->empty()) {
@@ -266,19 +257,6 @@ void MotionDetector::pointcloudCallback(
                        "Some clusters will not be published to individual topics. "
                        "Consider increasing max_cluster_topics in the launch file.",
                        clusters.size(), cluster_pubs_.size());
-    }
-    
-    // Publish the combined cloud to eval_clusters topic
-    if (!all_clusters_cloud->empty() && eval_clusters_pub_.getNumSubscribers() > 0) {
-      all_clusters_cloud->width = all_clusters_cloud->points.size();
-      all_clusters_cloud->height = 1;
-      all_clusters_cloud->is_dense = true;
-      
-      sensor_msgs::PointCloud2 combined_msg;
-      pcl::toROSMsg(*all_clusters_cloud, combined_msg);
-      combined_msg.header = msg->header;
-      
-      eval_clusters_pub_.publish(combined_msg);
     }
   }
 }

@@ -158,9 +158,6 @@ class MotionDetector {
   // Variables.
   int frame_counter_ = 0;
 
-  // Publisher for dynamic clusters with intensity
-  ros::Publisher eval_clusters_pub_;
-
   // In the class definition, add this to the private section:
   std::vector<ros::Publisher> cluster_pubs_;
 };
