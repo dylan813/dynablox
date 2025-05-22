@@ -21,10 +21,10 @@
   
   <!-- Cluster Extractor -->
   <arg name="max_cluster_topics" default="20"/>
-  <arg name="run_cluster_extractor" default="true"/>
+  <arg name="run_cluster_extractor" default="false"/>
   <arg name="cluster_output_dir" default="/media/dylan/Dylan_1TB/CMU_Research/Data/human_clusters"/>
   <arg name="cluster_file_prefix" default="cluster"/>
-  <arg name="save_clusters_as_bin" default="true"/>
+  <arg name="save_clusters_as_bin" default="false"/>
   
   <!-- ========== Run Nodes ========== -->
   <!-- Auto-generated arguments -->
