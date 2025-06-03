@@ -43,6 +43,7 @@ void MotionDetector::Config::setupParamsAndPrinting() {
 
   setupParam("use_latest_transform", &use_latest_transform);
   setupParam("transform_lookup_timeout", &transform_lookup_timeout);
+  setupParam("max_cluster_topics", &max_cluster_topics);
 }
 
 MotionDetector::MotionDetector(const ros::NodeHandle& nh,
@@ -206,17 +207,25 @@ void MotionDetector::pointcloudCallback(
     vis_timer.Stop();
   }
 
-  if (clusters.size() < cluster_pubs_.size()) {
-    cluster_pubs_.resize(clusters.size());
-  } else if (clusters.size() > cluster_pubs_.size()) {
-    cluster_pubs_.reserve(clusters.size()); // Optimize for multiple additions
-    for (size_t i = cluster_pubs_.size(); i < clusters.size(); ++i) {
+  size_t num_clusters_to_publish = clusters.size();
+  if (clusters.size() > static_cast<size_t>(config_.max_cluster_topics)) {
+    ROS_WARN_THROTTLE(5.0, "Number of detected clusters (%zu) exceeds 'max_cluster_topics' (%d). "
+                           "Only publishing the first %d clusters.",
+                           clusters.size(), config_.max_cluster_topics, config_.max_cluster_topics);
+    num_clusters_to_publish = config_.max_cluster_topics;
+  }
+
+  if (num_clusters_to_publish < cluster_pubs_.size()) {
+    cluster_pubs_.resize(num_clusters_to_publish);
+  } else if (num_clusters_to_publish > cluster_pubs_.size()) {
+    cluster_pubs_.reserve(num_clusters_to_publish);
+    for (size_t i = cluster_pubs_.size(); i < num_clusters_to_publish; ++i) {
       std::string topic_name = "cluster_" + std::to_string(i);
       cluster_pubs_.push_back(nh_.advertise<sensor_msgs::PointCloud2>(topic_name, 1));
     }
   }
 
-  for (size_t i = 0; i < clusters.size(); ++i) {
+  for (size_t i = 0; i < num_clusters_to_publish; ++i) {
     const auto& cluster = clusters[i];
     
     if (cluster.points.empty()) {

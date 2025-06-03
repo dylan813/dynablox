@@ -59,6 +59,9 @@ class MotionDetector {
     bool use_latest_transform = true;
     double transform_lookup_timeout = 0.1;  // seconds
 
+    /// Default max
+    int max_cluster_topics = 30;
+
     Config() { setConfigName("MotionDetector"); }
 
    protected:
