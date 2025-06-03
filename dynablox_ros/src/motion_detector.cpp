@@ -206,46 +206,45 @@ void MotionDetector::pointcloudCallback(
     vis_timer.Stop();
   }
 
-  if (!clusters.empty()) {
-    if (clusters.size() > cluster_pubs_.size()) {
-      for (size_t i = cluster_pubs_.size(); i < clusters.size(); ++i) {
-        std::string topic_name = "cluster_" + std::to_string(i);
-        cluster_pubs_.push_back(nh_.advertise<sensor_msgs::PointCloud2>(topic_name, 1));
-      }
+  if (clusters.size() < cluster_pubs_.size()) {
+    cluster_pubs_.resize(clusters.size());
+  } else if (clusters.size() > cluster_pubs_.size()) {
+    cluster_pubs_.reserve(clusters.size()); // Optimize for multiple additions
+    for (size_t i = cluster_pubs_.size(); i < clusters.size(); ++i) {
+      std::string topic_name = "cluster_" + std::to_string(i);
+      cluster_pubs_.push_back(nh_.advertise<sensor_msgs::PointCloud2>(topic_name, 1));
     }
+  }
 
-    for (size_t i = 0; i < clusters.size(); ++i) {
-      const auto& cluster = clusters[i];
+  for (size_t i = 0; i < clusters.size(); ++i) {
+    const auto& cluster = clusters[i];
+    
+    if (cluster.points.empty()) {
+      continue;
+    }
+    
+    pcl::PointCloud<pcl::PointXYZI>::Ptr cluster_cloud(new pcl::PointCloud<pcl::PointXYZI>);
+    
+    for (const auto& point_idx : cluster.points) {
+      pcl::PointXYZI point;
+      point.x = cloud[point_idx].x;
+      point.y = cloud[point_idx].y;
+      point.z = cloud[point_idx].z;
+      point.intensity = cloud[point_idx].intensity;
       
-      if (cluster.points.empty()) {
-        continue;
-      }
+      cluster_cloud->points.push_back(point);
+    }
+    
+    if (!cluster_cloud->empty()) {
+      cluster_cloud->width = cluster_cloud->points.size();
+      cluster_cloud->height = 1;
+      cluster_cloud->is_dense = true;
       
-      pcl::PointCloud<pcl::PointXYZI>::Ptr cluster_cloud(new pcl::PointCloud<pcl::PointXYZI>);
+      sensor_msgs::PointCloud2 output_msg;
+      pcl::toROSMsg(*cluster_cloud, output_msg);
+      output_msg.header = msg->header; 
       
-      for (const auto& point_idx : cluster.points) {
-        pcl::PointXYZI point;
-        point.x = cloud[point_idx].x;
-        point.y = cloud[point_idx].y;
-        point.z = cloud[point_idx].z;
-        point.intensity = cloud[point_idx].intensity;
-        
-        cluster_cloud->points.push_back(point);
-      }
-      
-      if (!cluster_cloud->empty()) {
-        cluster_cloud->width = cluster_cloud->points.size();
-        cluster_cloud->height = 1;
-        cluster_cloud->is_dense = true;
-        
-        sensor_msgs::PointCloud2 output_msg;
-        pcl::toROSMsg(*cluster_cloud, output_msg);
-        output_msg.header = msg->header;
-        
-        if (i < cluster_pubs_.size()) { 
-            cluster_pubs_[i].publish(output_msg);
-        }
-      }
+      cluster_pubs_[i].publish(output_msg);
     }
   }
 }
