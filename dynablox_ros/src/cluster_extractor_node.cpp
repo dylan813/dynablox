@@ -20,9 +20,9 @@ public:
     : nh_(nh), nh_private_(nh_private), frame_count_(0) {
     
     nh_private_.param<std::string>("output_dir", output_dir_, "/tmp/clusters");
-    nh_private_.param<std::string>("file_prefix", file_prefix_, "cluster");
+    nh_private_.param<std::string>("file_prefix", file_prefix_, "location");
     nh_private_.param<bool>("save_as_bin", save_as_bin_, true);
-    nh_private_.param<int>("num_clusters", num_clusters_, 20);
+    nh_private_.param<int>("num_clusters", num_clusters_, 100);
     
     createDirectory(output_dir_);
     
