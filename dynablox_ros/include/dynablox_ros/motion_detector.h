@@ -59,9 +59,6 @@ class MotionDetector {
     bool use_latest_transform = true;
     double transform_lookup_timeout = 0.1;  // seconds
 
-    /// Default max number of individual cluster topics
-    int max_cluster_topics = 20;
-
     Config() { setConfigName("MotionDetector"); }
 
    protected:

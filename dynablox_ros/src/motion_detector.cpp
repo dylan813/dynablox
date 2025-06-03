@@ -43,7 +43,6 @@ void MotionDetector::Config::setupParamsAndPrinting() {
 
   setupParam("use_latest_transform", &use_latest_transform);
   setupParam("transform_lookup_timeout", &transform_lookup_timeout);
-  setupParam("max_cluster_topics", &max_cluster_topics);
 }
 
 MotionDetector::MotionDetector(const ros::NodeHandle& nh,
@@ -124,11 +123,7 @@ void MotionDetector::setupRos() {
   lidar_pcl_sub_ = nh_.subscribe("pointcloud", config_.queue_size,
                                  &MotionDetector::pointcloudCallback, this);
   
-  // Pre-create publishers for the configured number of clusters
-  for (int i = 0; i < config_.max_cluster_topics; i++) {
-    std::string topic_name = "cluster_" + std::to_string(i);
-    cluster_pubs_.push_back(nh_.advertise<sensor_msgs::PointCloud2>(topic_name, 1));
-  }
+  cluster_pubs_.clear();
 }
 
 void MotionDetector::pointcloudCallback(
@@ -212,7 +207,14 @@ void MotionDetector::pointcloudCallback(
   }
 
   if (!clusters.empty()) {
-    for (size_t i = 0; i < clusters.size() && i < cluster_pubs_.size(); ++i) {
+    if (clusters.size() > cluster_pubs_.size()) {
+      for (size_t i = cluster_pubs_.size(); i < clusters.size(); ++i) {
+        std::string topic_name = "cluster_" + std::to_string(i);
+        cluster_pubs_.push_back(nh_.advertise<sensor_msgs::PointCloud2>(topic_name, 1));
+      }
+    }
+
+    for (size_t i = 0; i < clusters.size(); ++i) {
       const auto& cluster = clusters[i];
       
       if (cluster.points.empty()) {
@@ -240,14 +242,10 @@ void MotionDetector::pointcloudCallback(
         pcl::toROSMsg(*cluster_cloud, output_msg);
         output_msg.header = msg->header;
         
-        cluster_pubs_[i].publish(output_msg);
+        if (i < cluster_pubs_.size()) { 
+            cluster_pubs_[i].publish(output_msg);
+        }
       }
-    }
-    
-    if (clusters.size() > cluster_pubs_.size()) {
-      ROS_WARN_THROTTLE(5.0, "Number of clusters (%zu) exceeds max_cluster_topics (%zu)."
-                       "Consider increasing max_cluster_topics in the launch file.",
-                       clusters.size(), cluster_pubs_.size());
     }
   }
 }
