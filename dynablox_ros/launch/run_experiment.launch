@@ -4,7 +4,7 @@
   <!-- ========== Arguments ========== -->
   <!-- Dataset -->
   <arg name="use_doals" default="false" />  <!-- Which dataset to play -->
-  <arg name="bag_file" default="/media/dylan/Dylan_1TB/CMU_Research/Data/preprocess_humans.bag" />  <!-- Full path to the bag file to play -->
+  <arg name="bag_file" default="/home/cerlab/Documents/data/raw_pc/filtered.bag" />  <!-- Full path to the bag file to play -->
   <arg name="player_rate" default="1" />  <!-- Real time rate of bag being played -->
   
   <!-- Drift Simulation -->
@@ -20,10 +20,10 @@
   <arg name="visualize" default="true" />  <!-- Whether to display RVIZ visualizations -->
   
   <!-- Cluster Extractor -->
-  <arg name="max_cluster_topics" default="20"/>
+  <arg name="max_cluster_topics" default="30"/>
   <arg name="run_cluster_extractor" default="false"/>
-  <arg name="cluster_output_dir" default="/media/dylan/Dylan_1TB/CMU_Research/Data/human_clusters"/>
-  <arg name="cluster_file_prefix" default="cluster"/>
+  <arg name="cluster_output_dir" default="/output_dir"/>
+  <arg name="cluster_file_prefix" default="location"/>
   <arg name="save_clusters_as_bin" default="false"/>
   
   <!-- ========== Run Nodes ========== -->
@@ -46,14 +46,13 @@
 
     <!-- config -->
     <rosparam command="load" file="$(find dynablox_ros)/config/$(arg config_file)" />
+    <param name="max_cluster_topics" value="$(arg max_cluster_topics)"/>
 
     <!-- evaluation -->
     <param name="evaluation/ground_truth/file_path" value="$(arg ground_truth_file)" />
     <param name="evaluation/output_directory" value="$(arg eval_output_path)" />
     <param name="evaluate" value="$(arg evaluate)" />    
 
-    <!-- max_cluster_topics parameter -->
-    <param name="max_cluster_topics" value="$(arg max_cluster_topics)"/>
   </node>
   
   <!-- Use Cluster Extractor if set to True -->
