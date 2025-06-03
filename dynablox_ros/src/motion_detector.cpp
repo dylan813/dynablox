@@ -43,6 +43,7 @@ void MotionDetector::Config::setupParamsAndPrinting() {
 
   setupParam("use_latest_transform", &use_latest_transform);
   setupParam("transform_lookup_timeout", &transform_lookup_timeout);
+  setupParam("max_cluster_topics", &max_cluster_topics);
 }
 
 MotionDetector::MotionDetector(const ros::NodeHandle& nh,
@@ -210,21 +211,16 @@ void MotionDetector::pointcloudCallback(
     vis_timer.Stop();
   }
 
-  // After processing clusters, publish them both ways
   if (!clusters.empty()) {
-    // For each cluster
     for (size_t i = 0; i < clusters.size() && i < cluster_pubs_.size(); ++i) {
       const auto& cluster = clusters[i];
       
-      // Skip empty clusters
       if (cluster.points.empty()) {
         continue;
       }
       
-      // Create a point cloud for this cluster
       pcl::PointCloud<pcl::PointXYZI>::Ptr cluster_cloud(new pcl::PointCloud<pcl::PointXYZI>);
       
-      // For each point in the cluster
       for (const auto& point_idx : cluster.points) {
         pcl::PointXYZI point;
         point.x = cloud[point_idx].x;
@@ -232,7 +228,6 @@ void MotionDetector::pointcloudCallback(
         point.z = cloud[point_idx].z;
         point.intensity = cloud[point_idx].intensity;
         
-        // Add to individual cluster cloud
         cluster_cloud->points.push_back(point);
       }
       
@@ -241,20 +236,16 @@ void MotionDetector::pointcloudCallback(
         cluster_cloud->height = 1;
         cluster_cloud->is_dense = true;
         
-        // Convert to ROS message
         sensor_msgs::PointCloud2 output_msg;
         pcl::toROSMsg(*cluster_cloud, output_msg);
         output_msg.header = msg->header;
         
-        // Publish the cluster to its dedicated topic
         cluster_pubs_[i].publish(output_msg);
       }
     }
     
-    // Check if we exceeded the maximum number of clusters
     if (clusters.size() > cluster_pubs_.size()) {
-      ROS_WARN_THROTTLE(5.0, "Number of clusters (%zu) exceeds max_cluster_topics (%zu). "
-                       "Some clusters will not be published to individual topics. "
+      ROS_WARN_THROTTLE(5.0, "Number of clusters (%zu) exceeds max_cluster_topics (%zu)."
                        "Consider increasing max_cluster_topics in the launch file.",
                        clusters.size(), cluster_pubs_.size());
     }
@@ -269,7 +260,6 @@ bool MotionDetector::lookupTransform(const std::string& target_frame,
   timestamp_ros.fromNSec(timestamp);
 
   try {
-    // Wait for transform to be available with a timeout
     if (tf_listener_.waitForTransform(target_frame, source_frame, timestamp_ros, 
                                      ros::Duration(config_.transform_lookup_timeout))) {
       tf_listener_.lookupTransform(target_frame, source_frame, timestamp_ros, result);
