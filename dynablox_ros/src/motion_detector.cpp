@@ -19,6 +19,7 @@
 #include <tf2_ros/transform_listener.h>
 #include <visualization_msgs/Marker.h>
 #include <sensor_msgs/PointCloud2.h>
+#include <std_msgs/Header.h>
 
 namespace dynablox {
 
@@ -123,6 +124,8 @@ void MotionDetector::setupMembers() {
 void MotionDetector::setupRos() {
   lidar_pcl_sub_ = nh_.subscribe("pointcloud", config_.queue_size,
                                  &MotionDetector::pointcloudCallback, this);
+  frame_done_pub_ =
+      nh_private_.advertise<std_msgs::Header>("segmentation_done", 10);
   
   cluster_pubs_.clear();
 }
@@ -256,6 +259,12 @@ void MotionDetector::pointcloudCallback(
       cluster_pubs_[i].publish(output_msg);
     }
   }
+
+  // Publish a "frame done" trigger message with the original timestamp.
+  std_msgs::Header done_msg;
+  done_msg.stamp = msg->header.stamp;
+  done_msg.frame_id = msg->header.frame_id;
+  frame_done_pub_.publish(done_msg);
 }
 
 bool MotionDetector::lookupTransform(const std::string& target_frame,

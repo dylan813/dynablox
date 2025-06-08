@@ -137,6 +137,7 @@ class MotionDetector {
   ros::NodeHandle nh_;
   ros::NodeHandle nh_private_;
   ros::Subscriber lidar_pcl_sub_;
+  ros::Publisher frame_done_pub_;
   tf::TransformListener tf_listener_;
 
   // Voxblox map.
