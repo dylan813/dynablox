@@ -124,8 +124,8 @@ void MotionDetector::setupMembers() {
 void MotionDetector::setupRos() {
   lidar_pcl_sub_ = nh_.subscribe("pointcloud", config_.queue_size,
                                  &MotionDetector::pointcloudCallback, this);
-  frame_done_pub_ =
-      nh_private_.advertise<std_msgs::Header>("segmentation_done", 10);
+  cluster_batch_pub_ =
+      nh_private_.advertise<std_msgs::Header>("cluster_batch", 10);
   
   cluster_pubs_.clear();
   cluster_pubs_.reserve(config_.max_cluster_topics);
@@ -255,11 +255,11 @@ void MotionDetector::pointcloudCallback(
     }
   }
 
-  std_msgs::Header done_msg;
-  done_msg.stamp = msg->header.stamp;
-  done_msg.frame_id = msg->header.frame_id;
-  done_msg.seq = num_clusters_to_publish;
-  frame_done_pub_.publish(done_msg);
+  std_msgs::Header batch_manifest_msg;
+  batch_manifest_msg.stamp = msg->header.stamp;
+  batch_manifest_msg.frame_id = msg->header.frame_id;
+  batch_manifest_msg.seq = num_clusters_to_publish;
+  cluster_batch_pub_.publish(batch_manifest_msg);
 }
 
 bool MotionDetector::lookupTransform(const std::string& target_frame,
