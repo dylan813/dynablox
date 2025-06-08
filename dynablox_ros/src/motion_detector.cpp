@@ -128,6 +128,11 @@ void MotionDetector::setupRos() {
       nh_private_.advertise<std_msgs::Header>("segmentation_done", 10);
   
   cluster_pubs_.clear();
+  cluster_pubs_.reserve(config_.max_cluster_topics);
+  for (int i = 0; i < config_.max_cluster_topics; ++i) {
+      const std::string topic_name = "cluster_" + std::to_string(i);
+      cluster_pubs_.push_back(nh_.advertise<sensor_msgs::PointCloud2>(topic_name, 10));
+  }
 }
 
 void MotionDetector::pointcloudCallback(
@@ -218,16 +223,6 @@ void MotionDetector::pointcloudCallback(
     num_clusters_to_publish = config_.max_cluster_topics;
   }
 
-  if (num_clusters_to_publish < cluster_pubs_.size()) {
-    cluster_pubs_.resize(num_clusters_to_publish);
-  } else if (num_clusters_to_publish > cluster_pubs_.size()) {
-    cluster_pubs_.reserve(num_clusters_to_publish);
-    for (size_t i = cluster_pubs_.size(); i < num_clusters_to_publish; ++i) {
-      std::string topic_name = "cluster_" + std::to_string(i);
-      cluster_pubs_.push_back(nh_.advertise<sensor_msgs::PointCloud2>(topic_name, 1));
-    }
-  }
-
   for (size_t i = 0; i < num_clusters_to_publish; ++i) {
     const auto& cluster = clusters[i];
     
@@ -260,10 +255,10 @@ void MotionDetector::pointcloudCallback(
     }
   }
 
-  // Publish a "frame done" trigger message with the original timestamp.
   std_msgs::Header done_msg;
   done_msg.stamp = msg->header.stamp;
   done_msg.frame_id = msg->header.frame_id;
+  done_msg.seq = num_clusters_to_publish;
   frame_done_pub_.publish(done_msg);
 }
 
