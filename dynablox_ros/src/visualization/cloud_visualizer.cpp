@@ -70,7 +70,7 @@ void CloudVisualizer::timerCalback(const ros::TimerEvent& /** e */) {
 void CloudVisualizer::visualizeClouds() {
   for (size_t i = 0; i < clouds_.size(); ++i) {
     const std::string ns = "cloud_" + std::to_string(i);
-    visualizer_.visualizeGroundTruth(clouds_[i], cloud_infos_[i], ns);
+    visualizer_.visualizeGroundTruth(clouds_[i], cloud_infos_[i]);
     visualizer_.visualizeClusters(clusters_[i], ns);
   }
 }

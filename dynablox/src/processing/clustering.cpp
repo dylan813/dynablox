@@ -181,53 +181,31 @@ Clusters Clustering::inducePointClusters(
 }
 
 void Clustering::computeAABB(const Cloud& cloud, Cluster& cluster) const {
+  // Compute the axis aligned bounding box.
+  // Initialize AABB to an invalid state.
+  cluster.aabb.min_corner.x = std::numeric_limits<float>::max();
+  cluster.aabb.min_corner.y = std::numeric_limits<float>::max();
+  cluster.aabb.min_corner.z = std::numeric_limits<float>::max();
+  cluster.aabb.max_corner.x = -std::numeric_limits<float>::max();
+  cluster.aabb.max_corner.y = -std::numeric_limits<float>::max();
+  cluster.aabb.max_corner.z = -std::numeric_limits<float>::max();
+
   if (cluster.points.empty()) {
     return;
   }
-  Point& min = cluster.aabb.min_corner;
-  Point& max = cluster.aabb.max_corner;
-  if (config_.check_cluster_separation_exact) {
-    // Compute the exact AABB from points.
-    min = cloud[cluster.points[0]];
-    max = cloud[cluster.points[0]];
-    for (size_t i = 1; i < cluster.points.size(); ++i) {
-      const Point& point = cloud[cluster.points[i]];
-      min.x = std::min(min.x, point.x);
-      min.y = std::min(min.y, point.y);
-      min.z = std::min(min.z, point.z);
-      max.x = std::max(max.x, point.x);
-      max.y = std::max(max.y, point.y);
-      max.z = std::max(max.z, point.z);
-    }
-  } else {
-    // Approximate the AABB from voxels.
-    const float voxel_size = tsdf_layer_->voxel_size();
-    Point min;
-    min.x = std::numeric_limits<float>::max();
-    min.y = std::numeric_limits<float>::max();
-    min.z = std::numeric_limits<float>::max();
-    min.intensity = 0.0f;
 
-    Point max;
-    max.x = std::numeric_limits<float>::lowest();
-    max.y = std::numeric_limits<float>::lowest();
-    max.z = std::numeric_limits<float>::lowest();
-    max.intensity = 0.0f;
-
-    for (const Point& point : cluster.voxels) {
-      min.x = std::min(min.x, point.x);
-      min.y = std::min(min.y, point.y);
-      min.z = std::min(min.z, point.z);
-      max.x = std::max(max.x, point.x);
-      max.y = std::max(max.y, point.y);
-      max.z = std::max(max.z, point.z);
+  // Iterate over all points and expand the AABB, ignoring non-finite points.
+  for (const int point_idx : cluster.points) {
+    const Point& point = cloud[point_idx];
+    if (std::isfinite(point.x) && std::isfinite(point.y) &&
+        std::isfinite(point.z)) {
+      cluster.aabb.min_corner.x = std::min(cluster.aabb.min_corner.x, point.x);
+      cluster.aabb.min_corner.y = std::min(cluster.aabb.min_corner.y, point.y);
+      cluster.aabb.min_corner.z = std::min(cluster.aabb.min_corner.z, point.z);
+      cluster.aabb.max_corner.x = std::max(cluster.aabb.max_corner.x, point.x);
+      cluster.aabb.max_corner.y = std::max(cluster.aabb.max_corner.y, point.y);
+      cluster.aabb.max_corner.z = std::max(cluster.aabb.max_corner.z, point.z);
     }
-    min.x -= 0.5f * voxel_size;
-    min.y -= 0.5f * voxel_size;
-    min.z -= 0.5f * voxel_size;
-    max.x += 0.5f * voxel_size;
-    max.y += 0.5f * voxel_size;
-    max.z += 0.5f * voxel_size;
   }
 }
 

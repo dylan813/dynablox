@@ -7,10 +7,14 @@
 #include <thread>
 #include <utility>
 #include <vector>
+#include <unordered_map>
 
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl_ros/point_cloud.h>
 #include <ros/ros.h>
+#include <sensor_msgs/PointCloud2.h>
+#include <std_msgs/Header.h>
+#include <tf/transform_listener.h>
 #include <voxblox/core/block_hash.h>
 #include <voxblox/core/common.h>
 #include <voxblox_ros/tsdf_server.h>
@@ -79,6 +83,10 @@ class MotionDetector {
   // Callbacks.
   void pointcloudCallback(const sensor_msgs::PointCloud2::Ptr& msg);
 
+  // When a classification result is received.
+  void classificationCallback(const std_msgs::Header::ConstPtr& msg,
+                              int cluster_id);
+
   // Motion detection pipeline.
   bool lookupTransform(const std::string& target_frame,
                        const std::string& source_frame, uint64_t timestamp,
@@ -130,6 +138,10 @@ class MotionDetector {
       std::vector<voxblox::VoxelKey>& occupied_ever_free_voxel_indices,
       CloudInfo& cloud_info) const;
 
+  // Publishers
+  void createPublishers();
+  void publishTime(const CloudInfo& cloud_info);
+
  private:
   const Config config_;
 
@@ -138,13 +150,15 @@ class MotionDetector {
   ros::NodeHandle nh_private_;
   ros::Subscriber lidar_pcl_sub_;
   ros::Publisher cluster_batch_pub_;
+  std::vector<ros::Publisher> cluster_pubs_;
+  std::vector<ros::Subscriber> classification_subs_;
   tf::TransformListener tf_listener_;
 
   // Voxblox map.
   std::shared_ptr<voxblox::TsdfServer> tsdf_server_;
-  std::shared_ptr<TsdfLayer> tsdf_layer_;
+  std::shared_ptr<voxblox::Layer<voxblox::TsdfVoxel>> tsdf_layer_;
 
-  // Processing.
+  // Tools.
   std::shared_ptr<Preprocessing> preprocessing_;
   std::shared_ptr<EverFreeIntegrator> ever_free_integrator_;
   std::shared_ptr<Clustering> clustering_;
@@ -159,8 +173,12 @@ class MotionDetector {
   // Variables.
   int frame_counter_ = 0;
 
-  // In the class definition, add this to the private section:
-  std::vector<ros::Publisher> cluster_pubs_;
+  // Frame-to-frame data.
+  std::vector<Cluster> prev_clusters_;
+  Cloud prev_cloud_;
+  CloudInfo prev_cloud_info_;
+  std::unordered_map<int, std::string> classifications_;
+  std::unordered_map<int, std::string> prev_classifications_;
 };
 
 }  // namespace dynablox

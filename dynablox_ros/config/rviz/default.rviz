@@ -243,7 +243,7 @@ Visualization Manager:
                 {}
               Queue Size: 100
               Value: true
-          Enabled: false
+          Enabled: true
           Name: Points
         - Class: rviz/Group
           Displays:
@@ -265,6 +265,14 @@ Visualization Manager:
               Value: true
           Enabled: false
           Name: Clusters
+        - Class: rviz/MarkerArray
+          Enabled: true
+          Marker Topic: /motion_detector/visualization/clusters
+          Name: ClusterArray
+          Namespaces:
+            {}
+          Queue Size: 100
+          Value: true
         - Class: rviz/Group
           Displays:
             - Class: rviz/Marker

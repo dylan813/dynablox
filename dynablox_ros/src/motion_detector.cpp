@@ -133,6 +133,30 @@ void MotionDetector::setupRos() {
       const std::string topic_name = "cluster_" + std::to_string(i);
       cluster_pubs_.push_back(nh_.advertise<sensor_msgs::PointCloud2>(topic_name, 10));
   }
+
+  // Add subscribers for classifications.
+  classification_subs_.reserve(config_.max_cluster_topics);
+  for (int i = 0; i < config_.max_cluster_topics; ++i) {
+    const std::string topic_name =
+        "cluster_" + std::to_string(i) + "/class";
+    classification_subs_.push_back(nh_.subscribe<std_msgs::Header>(
+        topic_name, 10,
+        [this, i](const std_msgs::Header::ConstPtr& msg) {
+          // The cluster ID is not stable across frames, but the topic index is.
+          // We use the topic index 'i' as a proxy for the cluster ID for this frame.
+          // In the python script, the cluster published to /cluster_i gets its
+          // classification published to /cluster_i/class.
+          // The visualizer will then match this based on the cluster's ID.
+          // Note: This relies on the cluster ID being equivalent to the topic index.
+          this->classificationCallback(msg, i);
+        }));
+  }
+}
+
+void MotionDetector::classificationCallback(const std_msgs::Header::ConstPtr& msg,
+                                            int topic_index) {
+  // Store the classification, mapping the topic index to the class name.
+  classifications_[topic_index] = msg->frame_id;
 }
 
 void MotionDetector::pointcloudCallback(
@@ -187,6 +211,25 @@ void MotionDetector::pointcloudCallback(
   ever_free_integrator_->updateEverFreeVoxels(frame_counter_);
   update_ever_free_timer.Stop();
 
+  // Visualization of the PREVIOUS frame's data.
+  if (config_.visualize && frame_counter_ > 1) {
+    Timer vis_timer("visualizations");
+    // Create the correct mapping from cluster ID to classification string.
+    std::unordered_map<int, std::string> vis_classifications;
+    for (size_t i = 0; i < prev_clusters_.size(); ++i) {
+      // Check if we have a classification for the i-th topic.
+      if (prev_classifications_.count(i)) {
+        const int cluster_id = prev_clusters_[i].id;
+        vis_classifications[cluster_id] = prev_classifications_[i];
+      }
+    }
+
+    // Pass the correctly keyed classifications to the visualizer.
+    visualizer_->setClassifications(vis_classifications);
+    visualizer_->visualizeAll(prev_cloud_, prev_cloud_info_, prev_clusters_);
+    vis_timer.Stop();
+  }
+
   // Integrate the pointcloud into the voxblox TSDF map.
   Timer tsdf_timer("motion_detection/tsdf_integration");
   voxblox::Transformation T_G_C;
@@ -194,6 +237,13 @@ void MotionDetector::pointcloudCallback(
   tsdf_server_->processPointCloudMessageAndInsert(msg, T_G_C, false);
   tsdf_timer.Stop();
   detection_timer.Stop();
+
+  // Store current frame's data for next iteration's visualization.
+  prev_clusters_ = clusters;
+  prev_cloud_ = cloud;
+  prev_cloud_info_ = cloud_info;
+  prev_classifications_ = std::move(classifications_);
+  classifications_.clear();
 
   // Evaluation if requested.
   if (config_.evaluate) {
@@ -206,13 +256,6 @@ void MotionDetector::pointcloudCallback(
                 << " frames, shutting down";
       ros::shutdown();
     }
-  }
-
-  // Visualization if requested.
-  if (config_.visualize) {
-    Timer vis_timer("visualizations");
-    visualizer_->visualizeAll(cloud, cloud_info, clusters);
-    vis_timer.Stop();
   }
 
   size_t num_clusters_to_publish = clusters.size();
@@ -402,6 +445,10 @@ void MotionDetector::blockwiseBuildPointMap(
           std::make_pair(block_index, voxel_points_pair.first));
     }
   }
+}
+
+void MotionDetector::publishTime(const CloudInfo& cloud_info) {
+  // Nothing to do.
 }
 
 }  // namespace dynablox

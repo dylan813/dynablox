@@ -1,9 +1,11 @@
+#include <algorithm>
 #include "dynablox_ros/visualization/motion_visualizer.h"
 
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
+#include <unordered_map>
 
 namespace dynablox {
 
@@ -127,9 +129,7 @@ void MotionVisualizer::visualizeAll(const Cloud& cloud,
   time_stamp_set_ = true;
   visualizeLidarPose(cloud_info);
   visualizeLidarPoints(cloud);
-  visualizePointDetections(cloud, cloud_info);
-  visualizeClusterDetections(cloud, cloud_info, clusters);
-  visualizeObjectDetections(cloud, cloud_info, clusters);
+  visualizePointDetections(cloud, cloud_info, clusters);
   visualizeGroundTruth(cloud, cloud_info);
   visualizeMesh();
   visualizeEverFree();
@@ -155,69 +155,95 @@ void MotionVisualizer::visualizeClusters(const Clusters& clusters,
 
   size_t id = 0;
   for (const Cluster& cluster : clusters) {
-    if (cluster.points.size() > 1u) {
-      visualization_msgs::Marker msg;
-      msg.action = visualization_msgs::Marker::ADD;
-      msg.id = id++;
-      msg.ns = ns;
-      msg.header.stamp = getStamp();
-      msg.header.frame_id = config_.global_frame_name;
-      msg.type = visualization_msgs::Marker::LINE_LIST;
-      msg.color = setColor(color_map_.colorLookup(cluster.id));
-      msg.scale.x = config_.cluster_line_width;
-      msg.pose.orientation.w = 1.f;
-      const Eigen::Vector3f base = cluster.aabb.min_corner.getVector3fMap();
-      const Eigen::Vector3f delta = cluster.aabb.max_corner.getVector3fMap() - base;
-      const Eigen::Vector3f dx = delta.cwiseProduct(Eigen::Vector3f::UnitX());
-      const Eigen::Vector3f dy = delta.cwiseProduct(Eigen::Vector3f::UnitY());
-      const Eigen::Vector3f dz = delta.cwiseProduct(Eigen::Vector3f::UnitZ());
-
-      // All points of the box.
-      msg.points.push_back(setPoint(base));
-      msg.points.push_back(setPoint(base + dx));
-      msg.points.push_back(setPoint(base));
-      msg.points.push_back(setPoint(base + dy));
-      msg.points.push_back(setPoint(base + dx));
-      msg.points.push_back(setPoint(base + dx + dy));
-      msg.points.push_back(setPoint(base + dy));
-      msg.points.push_back(setPoint(base + dx + dy));
-
-      msg.points.push_back(setPoint(base + dz));
-      msg.points.push_back(setPoint(base + dx + dz));
-      msg.points.push_back(setPoint(base + dz));
-      msg.points.push_back(setPoint(base + dy + dz));
-      msg.points.push_back(setPoint(base + dx + dz));
-      msg.points.push_back(setPoint(base + dx + dy + dz));
-      msg.points.push_back(setPoint(base + dy + dz));
-      msg.points.push_back(setPoint(base + dx + dy + dz));
-
-      msg.points.push_back(setPoint(base));
-      msg.points.push_back(setPoint(base + dz));
-      msg.points.push_back(setPoint(base + dx));
-      msg.points.push_back(setPoint(base + dx + dz));
-      msg.points.push_back(setPoint(base + dy));
-      msg.points.push_back(setPoint(base + dy + dz));
-      msg.points.push_back(setPoint(base + dx + dy));
-      msg.points.push_back(setPoint(base + dx + dy + dz));
-      array_msg.markers.push_back(msg);
+    // Check if the cluster should be visualized
+    bool visualize = true;
+    if (classifications_.count(cluster.id)) {
+      if (classifications_.at(cluster.id) == "false") {
+        visualize = false;
+      }
     }
-    visualization_msgs::Marker msg;
-    msg.action = visualization_msgs::Marker::ADD;
-    msg.id = id++;
-    msg.ns = ns;
-    msg.header.stamp = getStamp();
-    msg.header.frame_id = config_.global_frame_name;
-    msg.color = setColor(color_map_.colorLookup(cluster.id));
-    msg.type = visualization_msgs::Marker::TEXT_VIEW_FACING;
-    msg.scale.z = 0.5;
-    msg.pose.position = setPoint(cluster.aabb.max_corner);
-    msg.pose.orientation.w = 1.f;
-    const float extent = cluster.aabb.extent();
-    std::stringstream stream;
-    stream << cluster.points.size() << "pts - " << std::fixed
-           << std::setprecision(1) << extent << "m";
-    msg.text = stream.str();
-    array_msg.markers.push_back(msg);
+
+    if (visualize) {
+      // Bounding Box (only for 'human' clusters)
+      if (classifications_.count(cluster.id) &&
+          classifications_.at(cluster.id) == "human") {
+        visualization_msgs::Marker cube_msg;
+        cube_msg.action = visualization_msgs::Marker::ADD;
+        cube_msg.id = id++;
+        cube_msg.ns = ns;
+        cube_msg.header.stamp = getStamp();
+        cube_msg.header.frame_id = config_.global_frame_name;
+        cube_msg.type = visualization_msgs::Marker::CUBE;
+
+        // Get corners as Eigen vectors to perform math.
+        const Eigen::Vector3f min_vec =
+            cluster.aabb.min_corner.getVector3fMap();
+        const Eigen::Vector3f max_vec =
+            cluster.aabb.max_corner.getVector3fMap();
+
+        // VITAL CHECK: Ensure min <= max to prevent RViz crash.
+        const Eigen::Vector3f dimensions = max_vec - min_vec;
+        if (dimensions.x() < 0.f || dimensions.y() < 0.f || dimensions.z() < 0.f) {
+           ROS_WARN_THROTTLE(1.0, "Skipping visualization of invalid cluster %d: min_corner > max_corner.", cluster.id);
+           continue;
+        }
+        
+        // Set the pose of the CUBE to the center of the AABB
+        const Eigen::Vector3f center = min_vec + dimensions / 2.0;
+
+        ROS_INFO(
+            "Visualizing Cluster ID %d with dimensions (x: %f, y: %f, z: %f)",
+            cluster.id, dimensions.x(), dimensions.y(), dimensions.z());
+
+        cube_msg.pose.position = setPoint(center);
+        cube_msg.pose.orientation.w = 1.0;
+
+        // Set the scale of the CUBE to the dimensions of the AABB, ensuring no
+        // zero values.
+        const float kMinDimension = 1e-4;
+        cube_msg.scale.x = std::max(dimensions.x(), kMinDimension);
+        cube_msg.scale.y = std::max(dimensions.y(), kMinDimension);
+        cube_msg.scale.z = std::max(dimensions.z(), kMinDimension);
+
+        // Set the color and transparency
+        cube_msg.color = setColor(color_map_.colorLookup(cluster.id));
+        cube_msg.color.a = 0.4;  // Make it semi-transparent
+
+        array_msg.markers.push_back(cube_msg);
+      }
+
+      // Text Label
+      visualization_msgs::Marker text_msg;
+      text_msg.action = visualization_msgs::Marker::ADD;
+      text_msg.id = id++;
+      text_msg.ns = ns;
+      text_msg.header.stamp = getStamp();
+      text_msg.header.frame_id = config_.global_frame_name;
+      if (classifications_.count(cluster.id)) {
+        // Simple color scheme: green for classified, default otherwise.
+        std_msgs::ColorRGBA color;
+        color.r = 0.f;
+        color.g = 1.f;
+        color.b = 0.f;
+        color.a = 0.5f;  // Make it slightly transparent
+        text_msg.color = color;
+      } else {
+        text_msg.color = setColor(color_map_.colorLookup(cluster.id));
+      }
+      text_msg.type = visualization_msgs::Marker::TEXT_VIEW_FACING;
+      text_msg.scale.z = 0.5;
+      text_msg.pose.position = setPoint(cluster.aabb.max_corner);
+      text_msg.pose.orientation.w = 1.f;
+      const float extent = cluster.aabb.extent();
+      std::stringstream stream;
+      if (classifications_.count(cluster.id)) {
+        stream << classifications_.at(cluster.id) << " - ";
+      }
+      stream << cluster.points.size() << "pts - " << std::fixed
+             << std::setprecision(1) << extent << "m";
+      text_msg.text = stream.str();
+      array_msg.markers.push_back(text_msg);
+    }
   }
   if (!array_msg.markers.empty()) {
     cluster_vis_pub_.publish(array_msg);
@@ -451,77 +477,29 @@ void MotionVisualizer::visualizeSlicePoints(const Cloud& cloud,
 }
 
 void MotionVisualizer::visualizeGroundTruth(const Cloud& cloud,
-                                            const CloudInfo& cloud_info,
-                                            const std::string& ns) const {
-  if (!cloud_info.has_labels) {
+                                            const CloudInfo& cloud_info) const {
+  if (gt_point_pub_.getNumSubscribers() == 0u) {
     return;
   }
-  // Go through all levels if it has subscribers.
-  if (gt_point_pub_.getNumSubscribers() > 0) {
-    visualizeGroundTruthAtLevel(
-        cloud, cloud_info,
-        [](const PointInfo& point) { return point.ever_free_level_dynamic; },
-        gt_point_pub_, ns);
-  }
-  if (gt_cluster_pub_.getNumSubscribers() > 0) {
-    visualizeGroundTruthAtLevel(
-        cloud, cloud_info,
-        [](const PointInfo& point) { return point.cluster_level_dynamic; },
-        gt_cluster_pub_, ns);
-  }
-  if (gt_object_pub_.getNumSubscribers() > 0) {
-    visualizeGroundTruthAtLevel(
-        cloud, cloud_info,
-        [](const PointInfo& point) { return point.object_level_dynamic; },
-        gt_object_pub_, ns);
-  }
-}
+  // Create a marker for all dynamic ground truth points.
+  visualization_msgs::Marker points_msg;
+  points_msg.action = visualization_msgs::Marker::ADD;
+  points_msg.id = 0;
+  points_msg.ns = "ground_truth_points";
+  points_msg.header.stamp = getStamp();
+  points_msg.header.frame_id = config_.global_frame_name;
+  points_msg.type = visualization_msgs::Marker::POINTS;
+  points_msg.scale = setScale(config_.dynamic_point_scale);
+  points_msg.color = setColor(config_.true_positive_color);
 
-void MotionVisualizer::visualizeGroundTruthAtLevel(
-    const Cloud& cloud, const CloudInfo& cloud_info,
-    const std::function<bool(const PointInfo&)>& check_level,
-    const ros::Publisher& pub, const std::string& ns) const {
-  // Common properties.
-  visualization_msgs::Marker result;
-  result.action = visualization_msgs::Marker::ADD;
-  result.id = 0;
-  result.ns = ns;
-  result.header.stamp = getStamp();
-  result.header.frame_id = config_.global_frame_name;
-  result.type = visualization_msgs::Marker::POINTS;
-  result.scale = setScale(config_.dynamic_point_scale);
-
-  visualization_msgs::Marker comp = result;
-  comp.scale = setScale(config_.static_point_scale);
-  comp.id = 1;
-
-  // Get all points.
-  size_t i = 0;
-  for (const auto& point : cloud.points) {
-    const PointInfo& info = cloud_info.points[i];
-    ++i;
-    if (point.z > config_.visualization_max_z) {
-      continue;
-    }
-    if (!info.ready_for_evaluation) {
-      comp.points.push_back(setPoint(point));
-      comp.colors.push_back(setColor(config_.out_of_bounds_color));
-    } else if (check_level(info) && info.ground_truth_dynamic) {
-      result.points.push_back(setPoint(point));
-      result.colors.push_back(setColor(config_.true_positive_color));
-    } else if (check_level(info) && !info.ground_truth_dynamic) {
-      result.points.push_back(setPoint(point));
-      result.colors.push_back(setColor(config_.false_positive_color));
-    } else if (!check_level(info) && info.ground_truth_dynamic) {
-      result.points.push_back(setPoint(point));
-      result.colors.push_back(setColor(config_.false_negative_color));
-    } else {
-      comp.points.push_back(setPoint(point));
-      comp.colors.push_back(setColor(config_.true_negative_color));
+  for (size_t i = 0; i < cloud.points.size(); ++i) {
+    const PointInfo& point_info = cloud_info.points[i];
+    const Point& point = cloud.points[i];
+    if (point_info.ground_truth_dynamic) {
+      points_msg.points.push_back(setPoint(point));
     }
   }
-  pub.publish(result);
-  pub.publish(comp);
+  gt_point_pub_.publish(points_msg);
 }
 
 void MotionVisualizer::visualizeLidarPose(const CloudInfo& cloud_info) const {
@@ -570,101 +548,67 @@ void MotionVisualizer::visualizeLidarPoints(const Cloud& cloud) const {
 }
 
 void MotionVisualizer::visualizePointDetections(
-    const Cloud& cloud, const CloudInfo& cloud_info) const {
-  const bool dynamic = detection_points_pub_.getNumSubscribers() > 0u;
-  const bool comp = detection_points_comp_pub_.getNumSubscribers() > 0u;
-
-  if (!dynamic && !comp) {
+    const Cloud& cloud, const CloudInfo& cloud_info,
+    const Clusters& clusters) const {
+  if (detection_points_pub_.getNumSubscribers() == 0u &&
+      detection_points_comp_pub_.getNumSubscribers() == 0u) {
     return;
   }
-
-  visualization_msgs::Marker result;
-  visualization_msgs::Marker result_comp;
-
-  if (dynamic) {
-    // Common properties.
-    result.points.reserve(cloud.points.size());
-    result.action = visualization_msgs::Marker::ADD;
-    result.id = 0;
-    result.header.stamp = getStamp();
-    result.header.frame_id = config_.global_frame_name;
-    result.type = visualization_msgs::Marker::POINTS;
-    result.color = setColor(config_.dynamic_point_color);
-    result.scale = setScale(config_.dynamic_point_scale);
+  // All points that are not part of any cluster are considered static.
+  visualization_msgs::Marker msg;
+  msg.action = visualization_msgs::Marker::ADD;
+  msg.ns = "detections_static_points";
+  msg.id = 0;
+  msg.header.stamp = getStamp();
+  msg.header.frame_id = config_.global_frame_name;
+  msg.type = visualization_msgs::Marker::SPHERE_LIST;
+  msg.scale = setScale(config_.static_point_scale);
+  msg.color = setColor(config_.static_point_color);
+  msg.pose.orientation.w = 1.0;
+  for (size_t i = 0; i < cloud.size(); ++i) {
+    if (!cloud_info.points[i].cluster_level_dynamic) {
+      msg.points.push_back(setPoint(cloud[i]));
+    }
   }
+  detection_points_comp_pub_.publish(msg);
 
-  if (comp) {
-    result_comp.points.reserve(cloud.points.size());
-    result_comp.action = visualization_msgs::Marker::ADD;
-    result_comp.id = 0;
-    result_comp.header.stamp = getStamp();
-    result_comp.header.frame_id = config_.global_frame_name;
-    result_comp.type = visualization_msgs::Marker::POINTS;
-    result_comp.color = setColor(config_.static_point_color);
-    result_comp.scale = setScale(config_.static_point_scale);
-  }
-
-  // Get all points.
-  int i = -1;
-  for (const auto& point : cloud.points) {
-    ++i;
-    if (point.z > config_.visualization_max_z) {
+  // Dynamic points are all points that are part of a cluster.
+  for (const auto& cluster : clusters) {
+    // Only visualize points for clusters that are not classified as false.
+    if (classifications_.count(cluster.id) &&
+        classifications_.at(cluster.id) == "false") {
       continue;
     }
-    if (cloud_info.points[i].ever_free_level_dynamic) {
-      if (!dynamic) {
-        continue;
-      }
-      result.points.push_back(setPoint(point));
-    } else {
-      if (!comp) {
-        continue;
-      }
-      result_comp.points.push_back(setPoint(point));
+    visualization_msgs::Marker c_msg;
+    c_msg.action = visualization_msgs::Marker::ADD;
+    c_msg.ns = "detections_dynamic_points";
+    c_msg.id = cluster.id;
+    c_msg.header.stamp = getStamp();
+    c_msg.header.frame_id = config_.global_frame_name;
+    c_msg.type = visualization_msgs::Marker::SPHERE_LIST;
+    c_msg.scale = setScale(config_.dynamic_point_scale);
+    c_msg.color = setColor(config_.dynamic_point_color);
+    c_msg.pose.orientation.w = 1.0;
+    for (const auto& point_idx : cluster.points) {
+      c_msg.points.push_back(setPoint(cloud[point_idx]));
     }
-  }
-  if (!result.points.empty()) {
-    detection_points_pub_.publish(result);
-  }
-  if (!result_comp.points.empty()) {
-    detection_points_comp_pub_.publish(result_comp);
+    detection_points_pub_.publish(c_msg);
   }
 }
 
-void MotionVisualizer::visualizeClusterDetections(
-    const Cloud& cloud, const CloudInfo& cloud_info,
-    const Clusters& clusters) const {
-  const bool dynamic = detection_cluster_pub_.getNumSubscribers() > 0u;
-  const bool comp = detection_cluster_comp_pub_.getNumSubscribers() > 0u;
-
-  if (!dynamic && !comp) {
+void MotionVisualizer::visualizeClusterDetections(const Cloud& cloud,
+                                                const Clusters& clusters) {
+  if (detection_cluster_pub_.getNumSubscribers() == 0u) {
     return;
   }
 
   visualization_msgs::Marker result;
-  visualization_msgs::Marker result_comp;
-
-  if (dynamic) {
-    // We just reserve too much space to save compute.
-    result.points.reserve(cloud.points.size());
-    result.action = visualization_msgs::Marker::ADD;
-    result.id = 0;
-    result.header.stamp = getStamp();
-    result.header.frame_id = config_.global_frame_name;
-    result.type = visualization_msgs::Marker::POINTS;
-    result.scale = setScale(config_.dynamic_point_scale);
-  }
-
-  if (comp) {
-    result_comp.points.reserve(cloud.points.size());
-    result_comp.action = visualization_msgs::Marker::ADD;
-    result_comp.id = 0;
-    result_comp.header.stamp = getStamp();
-    result_comp.header.frame_id = config_.global_frame_name;
-    result_comp.type = visualization_msgs::Marker::POINTS;
-    result_comp.color = setColor(config_.static_point_color);
-    result_comp.scale = setScale(config_.static_point_scale);
-  }
+  result.action = visualization_msgs::Marker::ADD;
+  result.id = 0;
+  result.header.stamp = getStamp();
+  result.header.frame_id = config_.global_frame_name;
+  result.type = visualization_msgs::Marker::POINTS;
+  result.scale = setScale(config_.dynamic_point_scale);
 
   // Get all cluster points.
   int i = 0;
@@ -677,7 +621,8 @@ void MotionVisualizer::visualizeClusterDetections(
       color = setColor(config_.dynamic_point_color);
     }
     for (int index : cluster.points) {
-      if (          cloud[index].z > config_.visualization_max_z) {
+      if (index < 0 || index >= static_cast<int>(cloud.points.size()) || 
+          cloud[index].z > config_.visualization_max_z) {
         continue;
       }
       result.points.push_back(setPoint(cloud[index]));
@@ -685,27 +630,7 @@ void MotionVisualizer::visualizeClusterDetections(
     }
   }
 
-  // Get all other points.
-  if (comp) {
-    size_t i = 0;
-    for (const auto& point : cloud.points) {
-      if (point.z > config_.visualization_max_z) {
-        ++i;
-        continue;
-      }
-      if (!cloud_info.points[i].cluster_level_dynamic) {
-        result_comp.points.push_back(setPoint(point));
-      }
-      ++i;
-    }
-  }
-
-  if (!result.points.empty()) {
-    detection_cluster_pub_.publish(result);
-  }
-  if (!result_comp.points.empty()) {
-    detection_cluster_comp_pub_.publish(result_comp);
-  }
+  detection_cluster_pub_.publish(result);
 }
 
 void MotionVisualizer::visualizeObjectDetections(
@@ -850,6 +775,11 @@ ros::Time MotionVisualizer::getStamp() const {
   } else {
     return ros::Time::now();
   }
+}
+
+void MotionVisualizer::setClassifications(
+    const std::unordered_map<int, std::string>& classifications) {
+  classifications_ = classifications;
 }
 
 }  // namespace dynablox

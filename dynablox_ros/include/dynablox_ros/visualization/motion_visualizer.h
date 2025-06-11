@@ -81,24 +81,26 @@ class MotionVisualizer {
                     const Clusters& clusters);
   void visualizeLidarPose(const CloudInfo& cloud_info) const;
   void visualizeLidarPoints(const Cloud& cloud) const;
-  void visualizePointDetections(const Cloud& cloud,
-                                const CloudInfo& cloud_info) const;
+  void visualizePointDetections(const Cloud& cloud, const CloudInfo& cloud_info,
+                                const Clusters& clusters) const;
   void visualizeClusterDetections(const Cloud& cloud,
-                                  const CloudInfo& cloud_info,
-                                  const Clusters& clusters) const;
+                                  const Clusters& clusters);
   void visualizeObjectDetections(const Cloud& cloud,
                                  const CloudInfo& cloud_info,
                                  const Clusters& clusters) const;
-  void visualizeGroundTruth(const Cloud& cloud, const CloudInfo& cloud_info,
-                            const std::string& ns = "") const;
+  void visualizeGroundTruth(const Cloud& cloud,
+                            const CloudInfo& cloud_info) const;
   void visualizeMesh() const;
   void visualizeEverFree() const;
   void visualizeEverFreeSlice(const float slice_height) const;
   void visualizeTsdfSlice(const float slice_height) const;
-  void visualizeSlicePoints(const Cloud& cloud,
-                            const CloudInfo& cloud_info) const;
+  void visualizeSlicePoints(const Cloud& cloud, const CloudInfo& cloud_info) const;
   void visualizeClusters(const Clusters& clusters,
-                         const std::string& ns = "") const;
+                         const std::string& ns = "clusters") const;
+
+  // Set the classifications to be used for future visualizations.
+  void setClassifications(
+      const std::unordered_map<int, std::string>& classifications);
 
   // ROS msg helper tools.
   static geometry_msgs::Vector3 setScale(const float scale);
@@ -139,13 +141,9 @@ class MotionVisualizer {
   // Variables.
   ros::Time current_stamp_;
   bool time_stamp_set_ = false;
+  std::unordered_map<int, std::string> classifications_;
 
   // Helper functions.
-  void visualizeGroundTruthAtLevel(
-      const Cloud& cloud, const CloudInfo& cloud_info,
-      const std::function<bool(const PointInfo&)>& check_level,
-      const ros::Publisher& pub, const std::string& ns) const;
-
   ros::Time getStamp() const;
 };
 
