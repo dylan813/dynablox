@@ -63,6 +63,11 @@
     <param name="num_clusters" value="$(arg max_cluster_topics)"/>
   </node>
   
+  <!-- Classification -->
+  <include file="$(find pointosr_ros)/launch/classification.launch">
+    <arg name="max_cluster_topics" value="$(arg max_cluster_topics)"/>
+  </include>
+
   <!-- Visualize -->
   <include file="$(find dynablox_ros)/launch/visualizer.launch" if="$(arg visualize)"/> 
 
