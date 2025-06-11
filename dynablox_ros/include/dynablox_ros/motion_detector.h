@@ -7,10 +7,15 @@
 #include <thread>
 #include <utility>
 #include <vector>
+#include <unordered_map>
+#include <map>
+#include <mutex>
 
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl_ros/point_cloud.h>
 #include <ros/ros.h>
+#include <std_msgs/Header.h>
+#include <sensor_msgs/PointCloud2.h>
 #include <voxblox/core/block_hash.h>
 #include <voxblox/core/common.h>
 #include <voxblox_ros/tsdf_server.h>
@@ -62,6 +67,12 @@ class MotionDetector {
     /// Default max
     int max_cluster_topics = 30;
 
+    // Filtered cluster mode
+    bool use_filtered_clusters = false;
+    std::string filtered_topic_prefix = "/filt_cluster_";
+    std::string filtered_trigger_topic = "/motion_detector/cluster_batch";
+    float filtered_buffer_timeout = 2.0;
+
     Config() { setConfigName("MotionDetector"); }
 
    protected:
@@ -78,6 +89,8 @@ class MotionDetector {
 
   // Callbacks.
   void pointcloudCallback(const sensor_msgs::PointCloud2::Ptr& msg);
+  void filteredClusterCallback(const sensor_msgs::PointCloud2::ConstPtr& msg, int cluster_index);
+  void filteredTriggerCallback(const std_msgs::Header::ConstPtr& msg);
 
   // Motion detection pipeline.
   bool lookupTransform(const std::string& target_frame,
@@ -130,6 +143,21 @@ class MotionDetector {
       std::vector<voxblox::VoxelKey>& occupied_ever_free_voxel_indices,
       CloudInfo& cloud_info) const;
 
+  /**
+   * @brief Convert filtered cluster messages to dynablox format and process them.
+   *
+   * @param cluster_msgs Map of cluster index to PointCloud2 message
+   * @param stamp Timestamp of the frame
+   */
+  void processFilteredClusters(
+      const std::unordered_map<int, sensor_msgs::PointCloud2::ConstPtr>& cluster_msgs,
+      const ros::Time& stamp);
+
+  /**
+   * @brief Clean up old buffered data for filtered clusters.
+   */
+  void cleanupFilteredBuffers();
+
  private:
   const Config config_;
 
@@ -139,6 +167,12 @@ class MotionDetector {
   ros::Subscriber lidar_pcl_sub_;
   ros::Publisher cluster_batch_pub_;
   tf::TransformListener tf_listener_;
+  
+  // Filtered cluster mode ROS  
+  std::vector<ros::Subscriber> filtered_cluster_subs_;
+  ros::Subscriber filtered_trigger_sub_;
+  std::map<ros::Time, std::unordered_map<int, sensor_msgs::PointCloud2::ConstPtr>> filtered_cluster_buffer_;
+  std::mutex filtered_buffer_lock_;
 
   // Voxblox map.
   std::shared_ptr<voxblox::TsdfServer> tsdf_server_;
@@ -158,6 +192,7 @@ class MotionDetector {
 
   // Variables.
   int frame_counter_ = 0;
+  int next_cluster_id_ = 0;
 
   // In the class definition, add this to the private section:
   std::vector<ros::Publisher> cluster_pubs_;
