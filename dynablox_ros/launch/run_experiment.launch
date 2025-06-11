@@ -20,7 +20,6 @@
   <arg name="visualize" default="true" />  <!-- Whether to display RVIZ visualizations -->
   <arg name="use_filtered_clusters" default="true" />  <!-- Use filtered clusters from classification instead of internal clustering -->
   <arg name="filtered_topic_prefix" default="/filt_cluster_" />  <!-- Prefix for filtered cluster topics -->
-  <arg name="filtered_buffer_timeout" default="0.5" />  <!-- Timeout for filtered cluster buffering -->
   
   <!-- Cluster Extractor -->
   <arg name="max_cluster_topics" default="30"/>
@@ -55,7 +54,6 @@
     <param name="use_filtered_clusters" value="$(arg use_filtered_clusters)" />
     <param name="filtered_topic_prefix" value="$(arg filtered_topic_prefix)" />
     <param name="filtered_trigger_topic" value="/motion_detector/cluster_batch" />
-    <param name="filtered_buffer_timeout" value="$(arg filtered_buffer_timeout)" />
 
     <!-- evaluation -->
     <param name="evaluation/ground_truth/file_path" value="$(arg ground_truth_file)" />

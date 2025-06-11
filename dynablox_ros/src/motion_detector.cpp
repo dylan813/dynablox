@@ -48,7 +48,6 @@ void MotionDetector::Config::setupParamsAndPrinting() {
   setupParam("use_filtered_clusters", &use_filtered_clusters);
   setupParam("filtered_topic_prefix", &filtered_topic_prefix);
   setupParam("filtered_trigger_topic", &filtered_trigger_topic);
-  setupParam("filtered_buffer_timeout", &filtered_buffer_timeout);
 }
 
 MotionDetector::MotionDetector(const ros::NodeHandle& nh,
@@ -456,39 +455,60 @@ void MotionDetector::blockwiseBuildPointMap(
 }
 
 void MotionDetector::filteredTriggerCallback(const std_msgs::Header::ConstPtr& msg) {
-  std::lock_guard<std::mutex> lock(filtered_buffer_lock_);
-  
-  ros::Time stamp = msg->stamp;
-  int expected_count = msg->seq;
-  
-  ROS_INFO("Classification complete for stamp %f with %d filtered clusters", stamp.toSec(), expected_count);
-  
-  // Process buffered clusters for this timestamp if we have any
-  auto it = filtered_cluster_buffer_.find(stamp);
-  if (it != filtered_cluster_buffer_.end() && !it->second.empty()) {
-    ROS_INFO("Processing %zu buffered filtered clusters for stamp %f", it->second.size(), stamp.toSec());
-    processFilteredClusters(it->second, stamp);
-    filtered_cluster_buffer_.erase(it);
-  } else if (expected_count > 0) {
-    ROS_WARN("Completion trigger received but no filtered clusters buffered for stamp %f", stamp.toSec());
-  }
-  
-  // Clean up old data
-  cleanupFilteredBuffers();
-}
+   std::lock_guard<std::mutex> lock(filtered_buffer_lock_);
+   
+   ros::Time stamp = msg->stamp;
+   int expected_count = msg->seq;
+   
+   // Store expected cluster count for this timestamp
+   filtered_trigger_buffer_[stamp] = expected_count;
+   
+   ROS_DEBUG("Classification complete for stamp %f with %d filtered clusters", stamp.toSec(), expected_count);
+   
+   // Check if we already have all expected clusters buffered.
+   auto clusters_it = filtered_cluster_buffer_.find(stamp);
+   if (clusters_it != filtered_cluster_buffer_.end()) {
+     size_t have = clusters_it->second.size();
+     if (have >= static_cast<size_t>(expected_count)) {
+       ROS_DEBUG("Processing %zu buffered filtered clusters for stamp %f (expected %d)", have, stamp.toSec(), expected_count);
+       processFilteredClusters(clusters_it->second, stamp);
+       filtered_cluster_buffer_.erase(clusters_it);
+       filtered_trigger_buffer_.erase(stamp);
+     } else {
+       ROS_DEBUG("Waiting for remaining %zu clusters for stamp %f", static_cast<size_t>(expected_count) - have, stamp.toSec());
+     }
+   } else {
+     ROS_DEBUG("No clusters buffered yet for stamp %f, waiting for them to arrive", stamp.toSec());
+   }
+   
+   pruneInflightBuffers();
+ }
 
 void MotionDetector::filteredClusterCallback(const sensor_msgs::PointCloud2::ConstPtr& msg, int cluster_index) {
-  std::lock_guard<std::mutex> lock(filtered_buffer_lock_);
-  
-  ros::Time stamp = msg->header.stamp;
-  
-  ROS_DEBUG("Received filtered cluster %d for stamp %f", cluster_index, stamp.toSec());
-  
-  // Buffer this cluster - do NOT process immediately
-  filtered_cluster_buffer_[stamp][cluster_index] = msg;
-  
-  // Only log reception, processing will happen when completion trigger arrives
-}
+   std::lock_guard<std::mutex> lock(filtered_buffer_lock_);
+   
+   ros::Time stamp = msg->header.stamp;
+   
+   ROS_DEBUG("Received filtered cluster %d for stamp %f", cluster_index, stamp.toSec());
+   
+   // Buffer this cluster
+   auto& cluster_map = filtered_cluster_buffer_[stamp];
+   cluster_map[cluster_index] = msg;
+   
+   // Check if we already know how many clusters to expect for this stamp
+   auto trig_it = filtered_trigger_buffer_.find(stamp);
+   if (trig_it != filtered_trigger_buffer_.end()) {
+     int expected_count = trig_it->second;
+     if (cluster_map.size() >= static_cast<size_t>(expected_count)) {
+       ROS_DEBUG("All %d filtered clusters received for stamp %f. Processing now.", expected_count, stamp.toSec());
+       processFilteredClusters(cluster_map, stamp);
+       filtered_cluster_buffer_.erase(stamp);
+       filtered_trigger_buffer_.erase(trig_it);
+     }
+   }
+   
+   pruneInflightBuffers();
+ }
 
 void MotionDetector::processFilteredClusters(
     const std::unordered_map<int, sensor_msgs::PointCloud2::ConstPtr>& cluster_msgs,
@@ -499,6 +519,10 @@ void MotionDetector::processFilteredClusters(
   // Convert filtered clusters to dynablox format
   Cloud combined_cloud;
   CloudInfo cloud_info;
+  cloud_info.timestamp = stamp.toNSec();
+  cloud_info.sensor_position.x = 0.f;
+  cloud_info.sensor_position.y = 0.f;
+  cloud_info.sensor_position.z = 0.f;
   Clusters clusters;
   
   // Process each cluster message
@@ -566,11 +590,11 @@ void MotionDetector::processFilteredClusters(
   }
   
   if (clusters.empty()) {
-    ROS_DEBUG("No valid filtered clusters to process for stamp %f", stamp.toSec());
+    ROS_INFO("No valid filtered clusters to process for stamp %f", stamp.toSec());
     return;
   }
   
-  ROS_INFO("Processing %zu filtered clusters with %zu total points", 
+  ROS_DEBUG("Processing %zu filtered clusters with %zu total points", 
            clusters.size(), combined_cloud.size());
   
   // Run tracking
@@ -581,7 +605,7 @@ void MotionDetector::processFilteredClusters(
   // Run visualization if enabled
   if (config_.visualize) {
     Timer vis_timer("filtered_frame/visualization");
-    ROS_INFO("Visualizing %zu filtered clusters with %zu total points", 
+    ROS_DEBUG("Visualizing %zu filtered clusters with %zu total points", 
              clusters.size(), combined_cloud.size());
     visualizer_->visualizeAll(combined_cloud, cloud_info, clusters);
     vis_timer.Stop();
@@ -597,33 +621,35 @@ void MotionDetector::processFilteredClusters(
   frame_timer.Stop();
 }
 
-void MotionDetector::cleanupFilteredBuffers() {
-  // Find the most recent timestamp
-  ros::Time latest_time;
-  bool has_data = false;
-  
-  for (const auto& pair : filtered_cluster_buffer_) {
-    if (!has_data || pair.first > latest_time) {
-      latest_time = pair.first;
-      has_data = true;
-    }
+void MotionDetector::pruneInflightBuffers() {
+  // If too many trigger stamps are buffered, drop oldest until within limit.
+  while (filtered_trigger_buffer_.size() > kMaxInFlight) {
+    dropFrame(filtered_trigger_buffer_.begin()->first, "trigger overflow");
   }
-  
-  if (!has_data) {
-    return;  // No data to clean up
+
+  // Same for cluster sets.
+  while (filtered_cluster_buffer_.size() > kMaxInFlight) {
+    dropFrame(filtered_cluster_buffer_.begin()->first, "cluster overflow");
   }
-  
-  ros::Duration timeout(2.0);  // 2 second timeout
-  
-  // Clean up old cluster data
-  for (auto it = filtered_cluster_buffer_.begin(); it != filtered_cluster_buffer_.end();) {
-    if ((latest_time - it->first) > timeout) {
-      ROS_WARN("Timing out stale filtered cluster data for stamp %f", it->first.toSec());
-      it = filtered_cluster_buffer_.erase(it);
-    } else {
-      ++it;
-    }
+}
+
+void MotionDetector::dropFrame(const ros::Time& stamp, const std::string& reason) {
+  size_t have = 0;
+  auto cl_it = filtered_cluster_buffer_.find(stamp);
+  if (cl_it != filtered_cluster_buffer_.end()) {
+    have = cl_it->second.size();
+    filtered_cluster_buffer_.erase(cl_it);
   }
+
+  int expected = 0;
+  auto tr_it = filtered_trigger_buffer_.find(stamp);
+  if (tr_it != filtered_trigger_buffer_.end()) {
+    expected = tr_it->second;
+    filtered_trigger_buffer_.erase(tr_it);
+  }
+
+  ROS_WARN("Dropping incomplete frame %f — %s (expected %d, received %zu)",
+           stamp.toSec(), reason.c_str(), expected, have);
 }
 
 }  // namespace dynablox
