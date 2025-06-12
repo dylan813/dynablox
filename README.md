@@ -1,12 +1,5 @@
-![Ubuntu 20.04 + ROS Noetic: Build](https://github.com/ethz-asl/dynablox/actions/workflows/build_test_20.yml/badge.svg)
-
 # Dynablox
 An online volumetric mapping-based approach for real-time detection of diverse dynamic objects in complex environments.
-
-
-<p align="center">
-  <img width='100%' src="https://user-images.githubusercontent.com/36043993/232650770-a042cbb9-c251-42f9-8a96-d7d9273fec96.gif">
-</p>
 
 # Table of Contents
 **Credits**
@@ -39,13 +32,6 @@ If you find this package useful for your research, please consider citing our pa
     doi={10.1109/LRA.2023.3305239}}
   }
   ```
-  
-## Video
-A brief overview of the problem, approach, and results is available on youtube:
-[<img src=https://user-images.githubusercontent.com/36043993/233706937-1ccd0c03-d86b-4e4f-ad47-48c38e8a7f8d.png alt="Dynablox Youtube Video">](https://www.youtube.com/watch?v=NA13fRWlqRQ)
-
-## News
-We were excited to learn that Dynablox has been integrated into NVIDIA's [nvblox](https://github.com/nvidia-isaac/nvblox), where the algorithm's parallelism can make fantastic use of the GPU and detect moving objects fast and at high resolutions! 
 
 # Setup
 
