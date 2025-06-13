@@ -39,8 +39,6 @@ There is a [docker image](https://hub.docker.com/repository/docker/zhangkin/dyna
 
 ## Installation
 
-* **Note on Versioning:** This package was developed using Ubuntu 20.04 using ROS Noetic. Other versions should also work but support can not be guaranteed.
-
 1. If not already done so, install [ROS](http://wiki.ros.org/action/fullsearch/melodic/Installation/Ubuntu?action=fullsearch&context=180&value=linkto%3A%22melodic%2FInstallation%2FUbuntu%22). We recommend using `Desktop-Full`.
 
 2. If not already done so, setup a catkin workspace:
