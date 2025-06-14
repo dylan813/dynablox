@@ -125,7 +125,6 @@ void MotionDetector::setupMembers() {
 }
 
 void MotionDetector::setupRos() {
-  // Always subscribe to lidar data to generate initial clusters
   lidar_pcl_sub_ = nh_.subscribe("pointcloud", config_.queue_size,
                                  &MotionDetector::pointcloudCallback, this);
   cluster_batch_pub_ =
@@ -139,21 +138,18 @@ void MotionDetector::setupRos() {
   }
 
   if (config_.use_filtered_clusters) {
-    // Setup filtered cluster mode
     ROS_INFO("Using filtered cluster mode with prefix '%s'", 
              config_.filtered_topic_prefix.c_str());
     
-    // Subscribe to filtered completion trigger (after classification is done)
     std::string completion_trigger_topic = config_.filtered_trigger_topic;
     size_t pos = completion_trigger_topic.find("cluster_batch");
     if (pos != std::string::npos) {
-      completion_trigger_topic.replace(pos, 13, "filtered_complete"); // 13 = length of "cluster_batch"
+      completion_trigger_topic.replace(pos, 13, "filtered_complete"); //13=length of "cluster_batch"
     }
     filtered_trigger_sub_ = nh_.subscribe(completion_trigger_topic, 10,
                                         &MotionDetector::filteredTriggerCallback, this);
     ROS_INFO("Subscribing to completion trigger on '%s'", completion_trigger_topic.c_str());
     
-    // Subscribe to filtered cluster topics
     filtered_cluster_subs_.reserve(config_.max_cluster_topics);
     for (int i = 0; i < config_.max_cluster_topics; ++i) {
       std::string topic_name = config_.filtered_topic_prefix + std::to_string(i);
@@ -212,7 +208,6 @@ void MotionDetector::pointcloudCallback(
   clustering_timer.Stop();
 
   if (!config_.use_filtered_clusters) {
-    // Normal mode: do tracking, evaluation, and visualization here
     // Tracking.
     Timer tracking_timer("motion_detection/tracking");
     tracking_->track(cloud, clusters, cloud_info);
@@ -238,18 +233,14 @@ void MotionDetector::pointcloudCallback(
       vis_timer.Stop();
     }
   } else {
-    // Filtered mode: only do basic visualization (lidar points, static elements)
-    // The dynamic cluster visualization will be done in processFilteredClusters
     if (config_.visualize) {
       Timer vis_timer("visualizations/basic");
-      // Create empty clusters for basic visualization (only lidar points, etc.)
       Clusters empty_clusters;
       visualizer_->visualizeAll(cloud, cloud_info, empty_clusters);
       vis_timer.Stop();
     }
   }
 
-  // Always update ever-free and TSDF (needed for both modes)
   // Integrate ever-free information.
   Timer update_ever_free_timer("motion_detection/update_ever_free");
   ever_free_integrator_->updateEverFreeVoxels(frame_counter_);
@@ -460,12 +451,10 @@ void MotionDetector::filteredTriggerCallback(const std_msgs::Header::ConstPtr& m
    ros::Time stamp = msg->stamp;
    int expected_count = msg->seq;
    
-   // Store expected cluster count for this timestamp
    filtered_trigger_buffer_[stamp] = expected_count;
    
    ROS_DEBUG("Classification complete for stamp %f with %d filtered clusters", stamp.toSec(), expected_count);
    
-   // Check if we already have all expected clusters buffered.
    auto clusters_it = filtered_cluster_buffer_.find(stamp);
    if (clusters_it != filtered_cluster_buffer_.end()) {
      size_t have = clusters_it->second.size();
@@ -491,11 +480,9 @@ void MotionDetector::filteredClusterCallback(const sensor_msgs::PointCloud2::Con
    
    ROS_DEBUG("Received filtered cluster %d for stamp %f", cluster_index, stamp.toSec());
    
-   // Buffer this cluster
    auto& cluster_map = filtered_cluster_buffer_[stamp];
    cluster_map[cluster_index] = msg;
    
-   // Check if we already know how many clusters to expect for this stamp
    auto trig_it = filtered_trigger_buffer_.find(stamp);
    if (trig_it != filtered_trigger_buffer_.end()) {
      int expected_count = trig_it->second;
@@ -516,7 +503,6 @@ void MotionDetector::processFilteredClusters(
   
   Timer frame_timer("filtered_frame");
   
-  // Convert filtered clusters to dynablox format
   Cloud combined_cloud;
   CloudInfo cloud_info;
   cloud_info.timestamp = stamp.toNSec();
@@ -525,11 +511,9 @@ void MotionDetector::processFilteredClusters(
   cloud_info.sensor_position.z = 0.f;
   Clusters clusters;
   
-  // Process each cluster message
   for (const auto& pair : cluster_msgs) {
     const auto& msg = pair.second;
     
-    // Convert PointCloud2 to PCL
     pcl::PointCloud<pcl::PointXYZI> pcl_cloud;
     pcl::fromROSMsg(*msg, pcl_cloud);
     
@@ -537,18 +521,15 @@ void MotionDetector::processFilteredClusters(
       continue;
     }
     
-    // Create cluster object
     Cluster cluster;
     cluster.id = next_cluster_id_++;
-    cluster.valid = true;  // These are already filtered as valid
-    cluster.track_length = 0;  // Will be updated by tracking
+    cluster.valid = true;
+    cluster.track_length = 0;
     
-    // Add points to combined cloud and set up cluster
     Point min_point, max_point;
     bool first_point = true;
     
     for (const auto& pcl_point : pcl_cloud.points) {
-      // Add to combined cloud
       Point point;
       point.x = pcl_point.x;
       point.y = pcl_point.y;
@@ -556,19 +537,16 @@ void MotionDetector::processFilteredClusters(
       point.intensity = pcl_point.intensity;
       combined_cloud.push_back(point);
       
-      // Add point info
       PointInfo point_info;
-      point_info.cluster_level_dynamic = true;  // These are already classified as dynamic
+      point_info.cluster_level_dynamic = true;
       point_info.ever_free_level_dynamic = false;
-      point_info.object_level_dynamic = false;  // Will be set by tracking
+      point_info.object_level_dynamic = false;
       point_info.ground_truth_dynamic = false;
       point_info.ready_for_evaluation = true;
       cloud_info.points.push_back(point_info);
       
-      // Add to cluster
       cluster.points.push_back(combined_cloud.size() - 1);
       
-      // Update bounding box
       if (first_point) {
         min_point = max_point = point;
         first_point = false;
@@ -582,7 +560,6 @@ void MotionDetector::processFilteredClusters(
       }
     }
     
-    // Set bounding box
     cluster.aabb.min_corner = min_point;
     cluster.aabb.max_corner = max_point;
     
@@ -597,7 +574,7 @@ void MotionDetector::processFilteredClusters(
   ROS_DEBUG("Processing %zu filtered clusters with %zu total points", 
            clusters.size(), combined_cloud.size());
   
-  // Run tracking
+  // Tracking
   Timer tracking_timer("filtered_frame/tracking");
   tracking_->track(combined_cloud, clusters, cloud_info);
   tracking_timer.Stop();
@@ -622,12 +599,10 @@ void MotionDetector::processFilteredClusters(
 }
 
 void MotionDetector::pruneInflightBuffers() {
-  // If too many trigger stamps are buffered, drop oldest until within limit.
   while (filtered_trigger_buffer_.size() > kMaxInFlight) {
     dropFrame(filtered_trigger_buffer_.begin()->first, "trigger overflow");
   }
 
-  // Same for cluster sets.
   while (filtered_cluster_buffer_.size() > kMaxInFlight) {
     dropFrame(filtered_cluster_buffer_.begin()->first, "cluster overflow");
   }
@@ -652,4 +627,4 @@ void MotionDetector::dropFrame(const ros::Time& stamp, const std::string& reason
            stamp.toSec(), reason.c_str(), expected, have);
 }
 
-}  // namespace dynablox
+}

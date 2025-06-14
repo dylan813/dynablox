@@ -67,7 +67,6 @@ class MotionDetector {
     /// Default max
     int max_cluster_topics = 30;
 
-    // Filtered cluster mode
     bool use_filtered_clusters = false;
     std::string filtered_topic_prefix = "/filt_cluster_";
     std::string filtered_trigger_topic = "/motion_detector/cluster_batch";
@@ -142,12 +141,6 @@ class MotionDetector {
       std::vector<voxblox::VoxelKey>& occupied_ever_free_voxel_indices,
       CloudInfo& cloud_info) const;
 
-  /**
-   * @brief Convert filtered cluster messages to dynablox format and process them.
-   *
-   * @param cluster_msgs Map of cluster index to PointCloud2 message
-   * @param stamp Timestamp of the frame
-   */
   void processFilteredClusters(
       const std::unordered_map<int, sensor_msgs::PointCloud2::ConstPtr>& cluster_msgs,
       const ros::Time& stamp);
@@ -162,12 +155,10 @@ class MotionDetector {
   ros::Publisher cluster_batch_pub_;
   tf::TransformListener tf_listener_;
   
-  // Filtered cluster mode ROS  
   std::vector<ros::Subscriber> filtered_cluster_subs_;
   ros::Subscriber filtered_trigger_sub_;
   std::map<ros::Time, std::unordered_map<int, sensor_msgs::PointCloud2::ConstPtr>> filtered_cluster_buffer_;
   std::mutex filtered_buffer_lock_;
-  // Buffer to store completion triggers (expected cluster counts) by timestamp.
   std::map<ros::Time, int> filtered_trigger_buffer_;
 
   // Voxblox map.
@@ -190,13 +181,8 @@ class MotionDetector {
   int frame_counter_ = 0;
   int next_cluster_id_ = 0;
 
-  // Maximum number of incomplete frames we allow to keep in memory at once.
   static constexpr size_t kMaxInFlight = 64;
-
-  // Helper that removes oldest incomplete frames once the buffer exceeds the limit.
   void pruneInflightBuffers();
-
-  // Helper that erases all trace of a given timestamp and logs why.
   void dropFrame(const ros::Time& stamp, const std::string& reason);
 
   // In the class definition, add this to the private section:
