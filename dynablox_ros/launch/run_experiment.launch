@@ -12,8 +12,8 @@
   
   <!-- Evaluation -->
   <arg name="evaluate" default="false" />  <!-- Whether to save evaluation data -->  
-  <arg name="eval_output_path" default="/home/$(env USER)/dynablox_output" />  <!-- Where to save evaluation data  -->
-  <arg name="ground_truth_file" default="/home/$(env USER)/data/DOALS/hauptgebaeude/sequence_1/indices.csv" />  <!-- GT data file. Currently supports DOALS -->
+  <arg name="eval_output_path" default="/home/$(env USER)/Documents/dynablox_output" />  <!-- Where to save evaluation data  -->
+  <arg name="ground_truth_file" default="/home/$(env USER)/Documents/data/DOALS/hauptgebaeude/sequence_1/indices.csv" />  <!-- GT data file. Currently supports DOALS -->
   
   <!-- Motion Detector -->
   <arg name="config_file" default="motion_detector/default.yaml" />  <!-- Configuration of Dynablox -->
@@ -71,7 +71,7 @@
   </node>
   
   <!-- Classification -->
-  <include file="$(find pointosr_ros)/launch/classification.launch">
+  <include file="$(find pointosr_ros)/launch/classification.launch" if="$(arg use_filtered_clusters)">
     <arg name="max_cluster_topics" value="$(arg max_cluster_topics)"/>
   </include>
 
