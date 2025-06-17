@@ -4,8 +4,6 @@ An online volumetric mapping-based approach for real-time detection of diverse d
 # Table of Contents
 **Credits**
 * [Paper](#Paper)
-* [Video](#Video)
-* [News](#News)
 
 **Setup**
 * [Installation](#Installation)
