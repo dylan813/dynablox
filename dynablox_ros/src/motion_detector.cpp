@@ -10,6 +10,7 @@
 
 #include <minkindr_conversions/kindr_tf.h>
 #include <pcl/segmentation/extract_clusters.h>
+#include <pcl/kdtree/kdtree_flann.h>
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl_ros/impl/transforms.hpp>
 #include <pcl_ros/point_cloud.h>
@@ -253,6 +254,15 @@ void MotionDetector::pointcloudCallback(
   tsdf_server_->processPointCloudMessageAndInsert(msg, T_G_C, false);
   tsdf_timer.Stop();
   detection_timer.Stop();
+
+  //store the raw pointcloud for evaluation
+  if (config_.use_filtered_clusters) {
+    std::lock_guard<std::mutex> lock(raw_buffer_lock_);
+    raw_cloud_buffer_[msg->header.stamp] = std::make_pair(cloud, cloud_info);
+    while (raw_cloud_buffer_.size() > kMaxInFlight) {
+      raw_cloud_buffer_.erase(raw_cloud_buffer_.begin());
+    }
+  }
 
   size_t num_clusters_to_publish = clusters.size();
   if (clusters.size() > static_cast<size_t>(config_.max_cluster_topics)) {
@@ -574,11 +584,63 @@ void MotionDetector::processFilteredClusters(
   ROS_DEBUG("Processing %zu filtered clusters with %zu total points", 
            clusters.size(), combined_cloud.size());
   
-  // Tracking
+  //retrieve the raw pointcloud for evaluation
+  Cloud raw_cloud;
+  CloudInfo raw_info;
+  bool have_raw_cloud = false;
+  {
+    std::lock_guard<std::mutex> lock(raw_buffer_lock_);
+    auto it = raw_cloud_buffer_.find(stamp);
+    if (it != raw_cloud_buffer_.end()) {
+      raw_cloud = it->second.first;
+      raw_info = it->second.second;
+      raw_cloud_buffer_.erase(it);
+      have_raw_cloud = true;
+    }
+  }
+
+  if (!have_raw_cloud) {
+    ROS_WARN_THROTTLE(10.0, "No raw cloud available for stamp %f – skipping evaluation", stamp.toSec());
+  }
+
+  //tracking
   Timer tracking_timer("filtered_frame/tracking");
   tracking_->track(combined_cloud, clusters, cloud_info);
   tracking_timer.Stop();
-  
+
+  //propagate cluster and object level dynamic flags to the raw cloud
+  pcl::KdTreeFLANN<Point> kdtree;
+  kdtree.setInputCloud(raw_cloud.makeShared());
+
+  const float radius_sq = 1e-4;  //cm^2 tolerance
+
+  for (size_t c_idx = 0; c_idx < clusters.size(); ++c_idx) {
+    const Cluster& filtered_cluster = clusters[c_idx];
+    for (int idx_filtered : filtered_cluster.points) {
+      const Point& p = combined_cloud[idx_filtered];
+      std::vector<int> nn_indices(1);
+      std::vector<float> nn_dists(1);
+      if (kdtree.nearestKSearch(p, 1, nn_indices, nn_dists) > 0 &&
+          nn_dists[0] < radius_sq) {
+        int raw_idx = nn_indices[0];
+        if (raw_idx >= 0 && raw_idx < static_cast<int>(raw_info.points.size())) {
+          raw_info.points[raw_idx].cluster_level_dynamic = true;
+          if (cloud_info.points[idx_filtered].object_level_dynamic) {
+            raw_info.points[raw_idx].object_level_dynamic = true;
+          }
+        }
+      }
+    }
+  }
+
+  //evaluation
+  if (config_.evaluate) {
+    Timer eval_timer("filtered_frame/evaluation_raw");
+    Clusters empty_clusters;
+    evaluator_->evaluateFrame(raw_cloud, raw_info, empty_clusters);
+    eval_timer.Stop();
+  }
+
   // Run visualization if enabled
   if (config_.visualize) {
     Timer vis_timer("filtered_frame/visualization");
@@ -586,13 +648,6 @@ void MotionDetector::processFilteredClusters(
              clusters.size(), combined_cloud.size());
     visualizer_->visualizeAll(combined_cloud, cloud_info, clusters);
     vis_timer.Stop();
-  }
-  
-  // Evaluation if requested
-  if (config_.evaluate) {
-    Timer eval_timer("filtered_frame/evaluation");
-    evaluator_->evaluateFrame(combined_cloud, cloud_info, clusters);
-    eval_timer.Stop();
   }
   
   frame_timer.Stop();

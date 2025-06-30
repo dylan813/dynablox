@@ -187,6 +187,10 @@ class MotionDetector {
 
   // In the class definition, add this to the private section:
   std::vector<ros::Publisher> cluster_pubs_;
+
+  //store the raw pointcloud for evaluation
+  std::map<ros::Time, std::pair<Cloud, CloudInfo>> raw_cloud_buffer_;
+  std::mutex raw_buffer_lock_;
 };
 
 }  // namespace dynablox
