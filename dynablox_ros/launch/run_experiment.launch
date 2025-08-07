@@ -54,6 +54,10 @@
     <param name="use_filtered_clusters" value="$(arg use_filtered_clusters)" />
     <param name="filtered_topic_prefix" value="$(arg filtered_topic_prefix)" />
     <param name="filtered_trigger_topic" value="/motion_detector/cluster_batch" />
+    
+    <!-- batch classification mode -->
+    <param name="use_batch_classification" value="true" />
+    <param name="batch_classification_topic" value="/classified_clusters" />
 
     <!-- evaluation -->
     <param name="evaluation/ground_truth/file_path" value="$(arg ground_truth_file)" />

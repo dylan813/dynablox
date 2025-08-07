@@ -34,6 +34,7 @@
   <depend>voxblox_ros</depend>
   <depend>voxblox_rviz_plugin</depend>
   <depend>dynablox</depend>
+  <depend>pointosr_ros</depend>
 
   <!-- Packages required for demo -->
   <depend>drift_simulation</depend>

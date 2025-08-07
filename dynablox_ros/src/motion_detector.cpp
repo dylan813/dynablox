@@ -49,6 +49,8 @@ void MotionDetector::Config::setupParamsAndPrinting() {
   setupParam("use_filtered_clusters", &use_filtered_clusters);
   setupParam("filtered_topic_prefix", &filtered_topic_prefix);
   setupParam("filtered_trigger_topic", &filtered_trigger_topic);
+  setupParam("use_batch_classification", &use_batch_classification);
+  setupParam("batch_classification_topic", &batch_classification_topic);
 }
 
 MotionDetector::MotionDetector(const ros::NodeHandle& nh,
@@ -163,6 +165,18 @@ void MotionDetector::setupRos() {
         )
       );
     }
+  }
+  
+  if (config_.use_batch_classification) {
+    ROS_INFO("Using batch classification mode on topic '%s'", 
+             config_.batch_classification_topic.c_str());
+    
+    batch_classification_sub_ = nh_.subscribe(
+      config_.batch_classification_topic, 10,
+      &MotionDetector::batchClassificationCallback, this);
+    
+    ROS_INFO("Subscribed to batch classifications on '%s'", 
+             config_.batch_classification_topic.c_str());
   }
 }
 
@@ -321,21 +335,42 @@ bool MotionDetector::lookupTransform(const std::string& target_frame,
   timestamp_ros.fromNSec(timestamp);
 
   try {
-    if (tf_listener_.waitForTransform(target_frame, source_frame, timestamp_ros, 
-                                     ros::Duration(config_.transform_lookup_timeout))) {
+    if (tf_listener_.waitForTransform(target_frame, source_frame, timestamp_ros,
+                                      ros::Duration(config_.transform_lookup_timeout))) {
       tf_listener_.lookupTransform(target_frame, source_frame, timestamp_ros, result);
+      last_good_T_M_S_ = result;
+      have_last_good_transform_ = true;
       return true;
-    } else if (config_.use_latest_transform) {
+    }
+
+    if (config_.use_latest_transform) {
       if (config_.verbose) {
         ROS_WARN_STREAM("Could not get transform at exact timestamp, using latest available transform");
       }
       tf_listener_.lookupTransform(target_frame, source_frame, ros::Time(0), result);
+      last_good_T_M_S_ = result;
+      have_last_good_transform_ = true;
       return true;
-    } else {
-      LOG(WARNING) << "Could not get sensor transform within timeout, skipping pointcloud";
-      return false;
     }
+
+    if (config_.use_previous_transform_on_fail && have_last_good_transform_) {
+      if (config_.verbose) {
+        ROS_WARN_STREAM("TF lookup failed, reusing previous transform");
+      }
+      result = last_good_T_M_S_;
+      return true;
+    }
+
+    LOG(WARNING) << "Could not get sensor transform within timeout, skipping pointcloud";
+    return false;
   } catch (tf::TransformException& ex) {
+    if (config_.use_previous_transform_on_fail && have_last_good_transform_) {
+      if (config_.verbose) {
+        ROS_WARN_STREAM("TF exception: " << ex.what() << "; reusing previous transform");
+      }
+      result = last_good_T_M_S_;
+      return true;
+    }
     LOG(WARNING) << "Could not get sensor transform, skipping pointcloud: " << ex.what();
     return false;
   }
@@ -577,8 +612,8 @@ void MotionDetector::processFilteredClusters(
   }
   
   if (clusters.empty()) {
-    ROS_INFO("No valid filtered clusters to process for stamp %f", stamp.toSec());
-    return;
+    ROS_INFO("No valid filtered clusters for stamp %f — continuing with evaluation on raw cloud.",
+             stamp.toSec());
   }
   
   ROS_DEBUG("Processing %zu filtered clusters with %zu total points", 
@@ -601,6 +636,10 @@ void MotionDetector::processFilteredClusters(
 
   if (!have_raw_cloud) {
     ROS_WARN_THROTTLE(10.0, "No raw cloud available for stamp %f – skipping evaluation", stamp.toSec());
+  }
+
+  if (have_raw_cloud) {
+    cloud_info.sensor_position = raw_info.sensor_position;
   }
 
   //tracking
@@ -680,6 +719,48 @@ void MotionDetector::dropFrame(const ros::Time& stamp, const std::string& reason
 
   ROS_WARN("Dropping incomplete frame %f — %s (expected %d, received %zu)",
            stamp.toSec(), reason.c_str(), expected, have);
+}
+
+void MotionDetector::batchClassificationCallback(const pointosr_ros::classification_batch::ConstPtr& msg) {
+  Timer frame_timer("batch_classification");
+  
+  ROS_DEBUG("Received batch classification with %zu clusters for stamp %f", 
+            msg->classified_clusters.size(), msg->header.stamp.toSec());
+  
+  std::vector<sensor_msgs::PointCloud2::ConstPtr> human_clusters;
+  for (const auto& cluster : msg->classified_clusters) {
+    if (cluster.is_human && cluster.processing_success) {
+      auto pc_ptr = boost::make_shared<sensor_msgs::PointCloud2>(cluster.pointcloud);
+      human_clusters.push_back(pc_ptr);
+      
+      ROS_DEBUG("Batch: Including human cluster %d (class='%s', conf=%.3f)", 
+                cluster.original_cluster_index, 
+                cluster.class_name.c_str(), 
+                cluster.confidence);
+    } else {
+      ROS_DEBUG("Batch: Filtering out cluster %d (class='%s', human=%s, success=%s)", 
+                cluster.original_cluster_index,
+                cluster.class_name.c_str(),
+                cluster.is_human ? "true" : "false",
+                cluster.processing_success ? "true" : "false");
+    }
+  }
+  
+  std::unordered_map<int, sensor_msgs::PointCloud2::ConstPtr> cluster_map;
+  for (size_t i = 0; i < human_clusters.size(); ++i) {
+    cluster_map[static_cast<int>(i)] = human_clusters[i];
+  }
+  
+  ROS_INFO("Batch Classification: Processed %zu total clusters, using %zu human clusters for motion detection",
+           msg->classified_clusters.size(), human_clusters.size());
+  
+  if (msg->processing_errors > 0) {
+    ROS_WARN("Batch Classification: %d clusters had processing errors", msg->processing_errors);
+  }
+  
+  processFilteredClusters(cluster_map, msg->header.stamp);
+  
+  frame_timer.Stop();
 }
 
 }

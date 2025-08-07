@@ -6,6 +6,15 @@
 queue_size: 20
 shutdown_after: 10  # number evaluations.
   
+# Frames and TF lookup behavior.
+# Set the global frame and control TF behavior to avoid pose jitter.
+global_frame_name: "map"
+# Set this only if your bag uses a different sensor frame than the cloud header.
+# Example: "os_sensor" or "os_lidar". Leave empty to use the cloud header.
+sensor_frame_name: ""
+use_latest_transform: false
+transform_lookup_timeout: 0.5  # seconds
+  
 # Preprocessing.
 preprocessing:
   min_range: &min_range 0.5  # m

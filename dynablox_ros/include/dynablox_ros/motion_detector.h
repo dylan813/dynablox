@@ -16,6 +16,7 @@
 #include <ros/ros.h>
 #include <std_msgs/Header.h>
 #include <sensor_msgs/PointCloud2.h>
+#include <pointosr_ros/classification_batch.h>
 #include <voxblox/core/block_hash.h>
 #include <voxblox/core/common.h>
 #include <voxblox_ros/tsdf_server.h>
@@ -63,6 +64,7 @@ class MotionDetector {
     // Transform time delay handling
     bool use_latest_transform = true;
     double transform_lookup_timeout = 0.1;  // seconds
+    bool use_previous_transform_on_fail = true;
 
     /// Default max
     int max_cluster_topics = 30;
@@ -70,6 +72,9 @@ class MotionDetector {
     bool use_filtered_clusters = false;
     std::string filtered_topic_prefix = "/filt_cluster_";
     std::string filtered_trigger_topic = "/motion_detector/cluster_batch";
+    
+    bool use_batch_classification = false;
+    std::string batch_classification_topic = "/classified_clusters";
 
     Config() { setConfigName("MotionDetector"); }
 
@@ -89,6 +94,7 @@ class MotionDetector {
   void pointcloudCallback(const sensor_msgs::PointCloud2::Ptr& msg);
   void filteredClusterCallback(const sensor_msgs::PointCloud2::ConstPtr& msg, int cluster_index);
   void filteredTriggerCallback(const std_msgs::Header::ConstPtr& msg);
+  void batchClassificationCallback(const pointosr_ros::classification_batch::ConstPtr& msg);
 
   // Motion detection pipeline.
   bool lookupTransform(const std::string& target_frame,
@@ -154,12 +160,16 @@ class MotionDetector {
   ros::Subscriber lidar_pcl_sub_;
   ros::Publisher cluster_batch_pub_;
   tf::TransformListener tf_listener_;
+  mutable tf::StampedTransform last_good_T_M_S_;
+  mutable bool have_last_good_transform_ = false;
   
   std::vector<ros::Subscriber> filtered_cluster_subs_;
   ros::Subscriber filtered_trigger_sub_;
   std::map<ros::Time, std::unordered_map<int, sensor_msgs::PointCloud2::ConstPtr>> filtered_cluster_buffer_;
   std::mutex filtered_buffer_lock_;
   std::map<ros::Time, int> filtered_trigger_buffer_;
+  
+  ros::Subscriber batch_classification_sub_;
 
   // Voxblox map.
   std::shared_ptr<voxblox::TsdfServer> tsdf_server_;
