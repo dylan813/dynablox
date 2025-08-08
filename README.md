@@ -151,6 +151,9 @@ roscd dynablox_ros/scripts
     roscd dynablox_ros/src/evaluation
     python3 evaluate_data.py /home/$USER/dynablox_output
     ```
+    ```bash
+    python3 src/dynablox/dynablox_ros/src/evaluation/evaluate_data.py ~/Documents/data/dynablox_output
+    ```
     2. You should now see the performance statistics for all experiments in that folder:
     ```
     1/1 data entries are complete.
