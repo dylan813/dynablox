@@ -85,4 +85,4 @@ voxblox:
   use_const_weight: true
   verbose: false
 
-global_frame_name: lidarMap
+global_frame_name: odom

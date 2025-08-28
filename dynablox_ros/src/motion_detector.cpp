@@ -751,7 +751,7 @@ void MotionDetector::batchClassificationCallback(const pointosr_ros::classificat
     cluster_map[static_cast<int>(i)] = human_clusters[i];
   }
   
-  ROS_INFO("Batch Classification: Processed %zu total clusters, using %zu human clusters for motion detection",
+  ROS_DEBUG("Batch Classification: Processed %zu total clusters, using %zu human clusters for motion detection",
            msg->classified_clusters.size(), human_clusters.size());
   
   if (msg->processing_errors > 0) {

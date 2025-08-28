@@ -4,7 +4,7 @@
   <!-- ========== Arguments ========== -->
   <!-- Dataset -->
   <arg name="use_doals" default="false" />  <!-- Which dataset to play -->
-  <arg name="bag_file" default="/home/cerlab/Documents/data/raw_pc/filtered.bag" />  <!-- Full path to the bag file to play -->
+  <arg name="bag_file" default="/home/cerlab/Documents/data/DOALS/niederdorf/sequence_1/2020-02-19-16-12-14.bag" />  <!-- Full path to the bag file to play -->
   <arg name="player_rate" default="1" />  <!-- Real time rate of bag being played -->
   
   <!-- Drift Simulation -->
@@ -12,8 +12,8 @@
   
   <!-- Evaluation -->
   <arg name="evaluate" default="false" />  <!-- Whether to save evaluation data -->  
-  <arg name="eval_output_path" default="/home/$(env USER)/Documents/dynablox_output" />  <!-- Where to save evaluation data  -->
-  <arg name="ground_truth_file" default="/home/$(env USER)/Documents/data/DOALS/hauptgebaeude/sequence_1/indices.csv" />  <!-- GT data file. Currently supports DOALS -->
+  <arg name="eval_output_path" default="/home/$(env USER)/Documents/data/dynablox_output" />  <!-- Where to save evaluation data  -->
+  <arg name="ground_truth_file" default="/home/$(env USER)/Documents/data/DOALS/niederdorf/sequence_1/indices.csv" />  <!-- GT data file. Currently supports DOALS -->
   
   <!-- Motion Detector -->
   <arg name="config_file" default="motion_detector/default.yaml" />  <!-- Configuration of Dynablox -->
@@ -22,7 +22,7 @@
   <arg name="filtered_topic_prefix" default="/filt_cluster_" />  <!-- Prefix for filtered cluster topics -->
   
   <!-- Cluster Extractor -->
-  <arg name="max_cluster_topics" default="30"/>
+  <arg name="max_cluster_topics" default="32"/>
   <arg name="run_cluster_extractor" default="false"/>
   <arg name="cluster_output_dir" default="/output_dir"/>
   <arg name="cluster_file_prefix" default="location"/>
