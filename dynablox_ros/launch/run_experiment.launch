@@ -4,7 +4,7 @@
   <!-- ========== Arguments ========== -->
   <!-- Dataset -->
   <arg name="use_doals" default="false" />  <!-- Which dataset to play -->
-  <arg name="bag_file" default="/home/cerlab/Documents/data/DOALS/niederdorf/sequence_1/2020-02-19-16-12-14.bag" />  <!-- Full path to the bag file to play -->
+  <arg name="bag_file" default="/home/cerlab/Documents/data/pointosr/benchmark/mall_lawn.bag" />  <!-- Full path to the bag file to play -->
   <arg name="player_rate" default="1" />  <!-- Real time rate of bag being played -->
   
   <!-- Drift Simulation -->

@@ -648,28 +648,32 @@ void MotionDetector::processFilteredClusters(
   tracking_timer.Stop();
 
   //propagate cluster and object level dynamic flags to the raw cloud
-  pcl::KdTreeFLANN<Point> kdtree;
-  kdtree.setInputCloud(raw_cloud.makeShared());
+  if (!raw_cloud.empty()) {
+    pcl::KdTreeFLANN<Point> kdtree;
+    kdtree.setInputCloud(raw_cloud.makeShared());
 
-  const float radius_sq = 1e-4;  //cm^2 tolerance
+    const float radius_sq = 1e-4;  //cm^2 tolerance
 
-  for (size_t c_idx = 0; c_idx < clusters.size(); ++c_idx) {
-    const Cluster& filtered_cluster = clusters[c_idx];
-    for (int idx_filtered : filtered_cluster.points) {
-      const Point& p = combined_cloud[idx_filtered];
-      std::vector<int> nn_indices(1);
-      std::vector<float> nn_dists(1);
-      if (kdtree.nearestKSearch(p, 1, nn_indices, nn_dists) > 0 &&
-          nn_dists[0] < radius_sq) {
-        int raw_idx = nn_indices[0];
-        if (raw_idx >= 0 && raw_idx < static_cast<int>(raw_info.points.size())) {
-          raw_info.points[raw_idx].cluster_level_dynamic = true;
-          if (cloud_info.points[idx_filtered].object_level_dynamic) {
-            raw_info.points[raw_idx].object_level_dynamic = true;
+    for (size_t c_idx = 0; c_idx < clusters.size(); ++c_idx) {
+      const Cluster& filtered_cluster = clusters[c_idx];
+      for (int idx_filtered : filtered_cluster.points) {
+        const Point& p = combined_cloud[idx_filtered];
+        std::vector<int> nn_indices(1);
+        std::vector<float> nn_dists(1);
+        if (kdtree.nearestKSearch(p, 1, nn_indices, nn_dists) > 0 &&
+            nn_dists[0] < radius_sq) {
+          int raw_idx = nn_indices[0];
+          if (raw_idx >= 0 && raw_idx < static_cast<int>(raw_info.points.size())) {
+            raw_info.points[raw_idx].cluster_level_dynamic = true;
+            if (cloud_info.points[idx_filtered].object_level_dynamic) {
+              raw_info.points[raw_idx].object_level_dynamic = true;
+            }
           }
         }
       }
     }
+  } else {
+    ROS_WARN_THROTTLE(10.0, "Raw cloud is empty for stamp %f - skipping KD-tree propagation", stamp.toSec());
   }
 
   //evaluation
