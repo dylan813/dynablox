@@ -1,0 +1,3 @@
+[submodule "pointosr"]
+	path = pointosr
+	url = git@github.com:dylan813/pointosr.git

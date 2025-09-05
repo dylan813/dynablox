@@ -45,3 +45,7 @@
 - git:
     local-name: ouster-ros
     uri: https://github.com/ouster-lidar/ouster-ros.git
+
+- git:
+    local-name: pointosr
+    uri: git@github.com:dylan813/pointosr.git
