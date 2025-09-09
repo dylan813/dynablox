@@ -4,7 +4,7 @@
   <!-- ========== Arguments ========== -->
   <!-- Dataset -->
   <arg name="use_doals" default="false" />  <!-- Which dataset to play -->
-  <arg name="bag_file" default="/home/cerlab/Documents/data/pointosr/benchmark/mall_lawn.bag" />  <!-- Full path to the bag file to play -->
+  <arg name="bag_file" default="/home/cerlab/Documents/data/pointosr/benchmark/mall_lawn/mall_lawn.bag" />  <!-- Full path to the bag file to play -->
   <arg name="player_rate" default="1" />  <!-- Real time rate of bag being played -->
   
   <!-- Drift Simulation -->
@@ -13,7 +13,7 @@
   <!-- Evaluation -->
   <arg name="evaluate" default="false" />  <!-- Whether to save evaluation data -->  
   <arg name="eval_output_path" default="/home/$(env USER)/Documents/data/dynablox_output" />  <!-- Where to save evaluation data  -->
-  <arg name="ground_truth_file" default="/home/$(env USER)/Documents/data/DOALS/niederdorf/sequence_1/indices.csv" />  <!-- GT data file. Currently supports DOALS -->
+  <arg name="ground_truth_file" default="/home/$(env USER)/Documents/data/DOALS/hauptgebaeude/sequence_1/indices.csv" />  <!-- GT data file. Currently supports DOALS -->
   
   <!-- Motion Detector -->
   <arg name="config_file" default="motion_detector/default.yaml" />  <!-- Configuration of Dynablox -->
@@ -27,6 +27,9 @@
   <arg name="cluster_output_dir" default="/output_dir"/>
   <arg name="cluster_file_prefix" default="location"/>
   <arg name="save_clusters_as_bin" default="false"/>
+  
+  <!-- Model Path -->
+  <arg name="model_path" default="/home/cerlab/Documents/data/pointosr/ckpt/cfgs-train-pointnext-s-ngpus1-seed42-20250824-130842-fzwiyYEtV7a4GyHM2H48rq_ckpt_best.pth" />
   
   <!-- ========== Run Nodes ========== -->
   <!-- Auto-generated arguments -->
@@ -77,6 +80,7 @@
   <!-- Classification -->
   <include file="$(find pointosr_ros)/launch/classification.launch" if="$(arg use_filtered_clusters)">
     <arg name="max_cluster_topics" value="$(arg max_cluster_topics)"/>
+    <arg name="model_path" value="$(arg model_path)"/>
   </include>
 
   <!-- Visualize -->
