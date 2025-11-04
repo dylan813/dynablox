@@ -21,8 +21,9 @@
   <arg name="use_filtered_clusters" default="true" />  <!-- Use filtered clusters from classification instead of internal clustering -->
   <arg name="filtered_topic_prefix" default="/filt_cluster_" />  <!-- Prefix for filtered cluster topics -->
   
-  <!-- Cluster Extractor -->
+  <!-- Max Batch Size -->
   <arg name="max_cluster_topics" default="32"/>
+  <!-- Offline Cluster Extractor for Data Collection -->
   <arg name="run_cluster_extractor" default="false"/>
   <arg name="cluster_output_dir" default="/output_dir"/>
   <arg name="cluster_file_prefix" default="location"/>
