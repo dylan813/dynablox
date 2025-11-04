@@ -28,9 +28,18 @@
   <arg name="cluster_file_prefix" default="location"/>
   <arg name="save_clusters_as_bin" default="false"/>
   
-  <!-- Model Path -->
+  <!-- Model architecture config -->
+  <arg name="cfg_path" default="$(find pointosr)/pointnext/cfgs/pointnext-s.yaml"/>
+  <!-- Model checkpoint -->
   <arg name="model_path" default="/home/cerlab/Documents/data/pointosr/ckpt/cfgs-train-pointnext-s-ngpus1-seed42-20250824-130842-fzwiyYEtV7a4GyHM2H48rq_ckpt_best.pth" />
-  
+  <!-- Dataset and calibration directories -->
+  <arg name="data_dir" default="/home/cerlab/Documents/data/pointosr/dataset"/>
+  <arg name="calibration_cache_dir" default="src/pointosr/calib_cache" /> <!-- keep default -->
+  <!-- Calibration parameters -->
+  <arg name="k_human" default="6" />
+  <arg name="k_false" default="4" />
+  <arg name="target_tpr" default="0.99" />
+
   <!-- ========== Run Nodes ========== -->
   <!-- Auto-generated arguments -->
   <arg name="use_drift" value="$(eval arg('drift_simulation_rollout')!='')" />
@@ -77,10 +86,16 @@
     <param name="num_clusters" value="$(arg max_cluster_topics)"/>
   </node>
   
-  <!-- Classification -->
+  <!-- Classification with Online Calibration -->
   <include file="$(find pointosr_ros)/launch/classification.launch" if="$(arg use_filtered_clusters)">
     <arg name="max_cluster_topics" value="$(arg max_cluster_topics)"/>
     <arg name="model_path" value="$(arg model_path)"/>
+    <arg name="cfg_path" value="$(arg cfg_path)"/>
+    <arg name="data_dir" value="$(arg data_dir)"/>
+    <arg name="calibration_cache_dir" value="$(arg calibration_cache_dir)"/>
+    <arg name="k_human" value="$(arg k_human)"/>
+    <arg name="k_false" value="$(arg k_false)"/>
+    <arg name="target_tpr" value="$(arg target_tpr)"/>
   </include>
 
   <!-- Visualize -->
