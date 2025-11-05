@@ -8,6 +8,8 @@ from data_tools import read_score_data, verify_data, get_grid
 
 SCENES = ["hauptgebaeude", "niederdorf", "station", "shopville"]
 SEQUENCES = [1, 2]
+# New benchmark datasets
+BENCHMARK_SCENES = ["mall_lawn", "east_west_walkway"]
 
 
 def main(args):
@@ -53,10 +55,18 @@ def read_single_dir(path):
     with open(config_file, 'r') as file:
         lines = file.readlines()
         string = "".join(lines).replace('\n', '').replace(' ', '')
+        
+        # Check DOALS datasets
         for s in SCENES:
             for seq in SEQUENCES:
                 if string.find(f"{s}/sequence_{seq}/indices.csv") != -1:
                     return True, f"{s}_{seq}", read_score_data(scores_file)
+        
+        # Check benchmark datasets
+        for s in BENCHMARK_SCENES:
+            if string.find(f"{s}/indices.csv") != -1:
+                return True, s, read_score_data(scores_file)
+    
     return False, None, None
 
 
@@ -67,7 +77,15 @@ def table(data_path, metrics,
           print_mode=False,
           print_overall=True):
     data, names = read_data(data_path)
-    verify_data(data, names)
+    
+    # Amount of labeled frames
+    expected_entries = 10  # Default for DOALS
+    for name in names:
+        if name in BENCHMARK_SCENES:
+            expected_entries = 30
+            break
+    
+    verify_data(data, names, expected_entries)
 
     def print_row(entries):
         if print_mode == 'latex':
