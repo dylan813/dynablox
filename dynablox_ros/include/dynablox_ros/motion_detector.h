@@ -191,7 +191,7 @@ class MotionDetector {
   int frame_counter_ = 0;
   int next_cluster_id_ = 0;
 
-  static constexpr size_t kMaxInFlight = 64;
+  static constexpr size_t kMaxInFlight = 300;
   void pruneInflightBuffers();
   void dropFrame(const ros::Time& stamp, const std::string& reason);
 
