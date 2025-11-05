@@ -4,7 +4,7 @@
 #visualize: true # Set by launch file
 #num_threads: 1  # uses hardware concurrency if left empty.
 queue_size: 20
-shutdown_after: 10  # number evaluations.
+shutdown_after: 30  # number evaluations.
   
 # Frames and TF lookup behavior.
 # Set the global frame and control TF behavior to avoid pose jitter.
