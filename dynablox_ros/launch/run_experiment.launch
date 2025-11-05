@@ -11,15 +11,15 @@
   <arg name="drift_simulation_rollout" default="" />  <!-- Leave empty to ignore drift or specify a rollout that matches the dataset bein played --> 
   
   <!-- Evaluation -->
-  <arg name="evaluate" default="false" />  <!-- Whether to save evaluation data -->  
+  <arg name="evaluate" default="true" />  <!-- Whether to save evaluation data -->  
   <arg name="eval_output_path" default="/home/cerlab/Documents/data/dynablox_output" />  <!-- Where to save evaluation data  -->
-  <arg name="ground_truth_file" default="/home/cerlab/Documents/data/DOALS/hauptgebaeude/sequence_1/indices.csv" />  <!-- GT data file. Currently supports DOALS -->
+  <arg name="ground_truth_file" default="/home/cerlab/Documents/data/pointosr/benchmark/mall_lawn/indices.csv" />  <!-- GT data file. Currently supports DOALS -->
   
   <!-- Motion Detector -->
   <arg name="config_file" default="motion_detector/default.yaml" />  <!-- Configuration of Dynablox -->
-  <arg name="visualize" default="false" />  <!-- Whether to display RVIZ visualizations -->
-  <arg name="use_filtered_clusters" default="true" />  <!-- Use filtered clusters from classification instead of internal clustering -->
-  <arg name="filtered_topic_prefix" default="/filt_cluster_" />  <!-- Prefix for filtered cluster topics -->
+  <arg name="visualize" default="false" />  <!-- Display RVIZ visualizations -->
+  <arg name="use_filtered_clusters" default="true" />  <!-- Turn on cluster classification (PointOSR) -->
+  <arg name="filtered_topic_prefix" default="/filt_cluster_" />
   
   <!-- Max Batch Size -->
   <arg name="max_cluster_topics" default="32"/>
