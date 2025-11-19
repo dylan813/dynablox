@@ -1,7 +1,6 @@
 FROM ubuntu:20.04
 LABEL maintainer="Dylan Leong"
 
-# Just in case we need it
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Install system dependencies and ROS Noetic
@@ -46,7 +45,7 @@ RUN apt-get update && apt-get install -y \
     libeigen3-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install CUDA toolkit 11.8 (needed for pointosr CUDA extensions)
+# Install CUDA toolkit 11.8
 RUN wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/cuda-keyring_1.0-1_all.deb \
     && dpkg -i cuda-keyring_1.0-1_all.deb \
     && apt-get update \
@@ -60,7 +59,7 @@ ENV PATH=$CUDA_HOME/bin:$PATH
 ENV LD_LIBRARY_PATH=$CUDA_HOME/lib64:$CUDA_HOME/extras/CUPTI/lib64
 ENV TORCH_CUDA_ARCH_LIST="6.0;6.1;7.0;7.5;8.0;8.6;8.9"
 
-# Install Python dependencies (PyTorch 2.0.1 cu118 for RTX 4070 Ada support)
+# Install Python dependencies
 RUN pip3 install pip==23.1.2 \
     && pip3 install numpy==1.21.6 \
     && pip3 install typing-extensions==4.5.0 sympy==1.12 mpmath==1.3.0 filelock==3.9.0 \
@@ -71,7 +70,7 @@ RUN pip3 install pip==23.1.2 \
     && pip3 install git+https://github.com/eric-wieser/ros_numpy.git \
     && python3 -c "import torch; print(f'PyTorch version: {torch.__version__}'); import numpy; print(f'NumPy version: {numpy.__version__}')"
 
-# Install pointosr requirements (compatible with system packages)
+# Install pointosr requirements
 RUN pip3 install \
     scikit-learn==1.0.2 \
     pickleshare==0.7.5 \
@@ -118,6 +117,14 @@ RUN rosdep init && rosdep update
 
 # Install spdlog for ouster driver (build dependency)
 RUN cd /workspace && git clone https://github.com/gabime/spdlog.git && cd spdlog && mkdir build && cd build && cmake .. -DCMAKE_CXX_FLAGS=-fPIC && make -j && make install
+
+# Install pointosr CUDA extensions
+RUN cd /workspace && \
+    git clone https://github.com/dylan813/pointosr.git pointosr && \
+    cd pointosr/pointosr/pointnext/cpp/pointnet2_batch && \
+    python3 setup.py install && \
+    cd /workspace && \
+    rm -rf pointosr && \
 
 # Set working directory
 WORKDIR /workspace/dynablox_ws
