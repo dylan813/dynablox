@@ -57,18 +57,67 @@ There is a [docker image](https://hub.docker.com/repository/docker/zhangkin/dyna
 3. Clone the repo using [SSH Keys](https://docs.github.com/en/authentication/connecting-to-github-with-ssh):
     ```bash
     cd ~/catkin_ws/src
-    git clone git@github.com:dylan813/dynablox.git
+    git clone https://github.com/dylan813/dynablox.git
     ```
 
 4. Install ROS dependencies:
     ```bash
     cd ~/catkin_ws/src
-    vcs import . < ./dynablox/ssh.rosinstall --recursive 
+    vcs import . < ./dynablox/https.rosinstall --recursive 
     ```
 
 5. Build:
     ```bash
     catkin build dynablox_ros
+    ```
+
+## Docker
+1. Build Docker
+    ```bash
+    cd ~/catkin_ws/src/dynablox
+    docker build -t dynablox:latest .
+    ```
+
+2. Set up X11 forwarding
+    ```bash
+    xhost +local:docker
+    ```
+
+3. Run Container with Mounted Workspace
+    ```bash
+    docker run -it --rm \
+    --gpus all \
+    --net=host \
+    --privileged \
+    -e DISPLAY=$DISPLAY \
+    -v /tmp/.X11-unix:/tmp/.X11-unix \
+    -v /home/cerlab/Documents/workspace:/workspace/dynablox_ws \
+    -v /home/cerlab/Documents/data:/home/cerlab/Documents/data \
+    dynablox:latest
+    ```
+
+4. First Time Setup
+    ```bash
+    cd /workspace/dynablox_ws
+
+    # Initialize catkin workspace
+    catkin init
+    catkin config --extend /opt/ros/noetic
+    catkin config --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo
+    catkin config --merge-devel
+
+    # Clone dependencies (if not already done)
+    cd src
+    git clone https://github.com/dylan813/dynablox.git
+    vcs import . < ./dynablox/https.rosinstall --recursive
+
+    # Build
+    cd /workspace/dynablox_ws
+    catkin build dynablox_ros
+
+    # Source workspace (zsh or bash)
+    source devel/setup.zsh
+    source devel/setup.bash
     ```
 
 ## Datasets
