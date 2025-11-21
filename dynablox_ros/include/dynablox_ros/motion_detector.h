@@ -201,6 +201,12 @@ class MotionDetector {
   //store the raw pointcloud for evaluation
   std::map<ros::Time, std::pair<Cloud, CloudInfo>> raw_cloud_buffer_;
   std::mutex raw_buffer_lock_;
+  
+  //track end-to-end latencies for batch classification
+  mutable std::vector<double> classification_latencies_;
+  mutable std::map<ros::Time, ros::Time> cluster_publish_times_;
+  mutable std::mutex latency_mutex_;
+  void saveLatenciesToFile() const;
 };
 
 }  // namespace dynablox

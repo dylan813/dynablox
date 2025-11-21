@@ -2,7 +2,10 @@
 
 #include <math.h>
 
+#include <cmath>
+#include <fstream>
 #include <future>
+#include <limits>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -322,6 +325,13 @@ void MotionDetector::pointcloudCallback(
   batch_manifest_msg.stamp = msg->header.stamp;
   batch_manifest_msg.frame_id = msg->header.frame_id;
   batch_manifest_msg.seq = num_clusters_to_publish;
+  
+  //record publish time for latency tracking
+  if (config_.use_batch_classification) {
+    std::lock_guard<std::mutex> lock(latency_mutex_);
+    cluster_publish_times_[msg->header.stamp] = ros::Time::now();
+  }
+  
   cluster_batch_pub_.publish(batch_manifest_msg);
 
   frame_timer.Stop();
@@ -682,6 +692,9 @@ void MotionDetector::processFilteredClusters(
     Clusters empty_clusters;
     evaluator_->evaluateFrame(raw_cloud, raw_info, empty_clusters);
     eval_timer.Stop();
+    
+    //save latency data
+    saveLatenciesToFile();
   }
 
   // Run visualization if enabled
@@ -728,8 +741,21 @@ void MotionDetector::dropFrame(const ros::Time& stamp, const std::string& reason
 void MotionDetector::batchClassificationCallback(const pointosr_ros::classification_batch::ConstPtr& msg) {
   Timer frame_timer("batch_classification");
   
-  ROS_DEBUG("Received batch classification with %zu clusters for stamp %f", 
-            msg->classified_clusters.size(), msg->header.stamp.toSec());
+  //calculate end-to-end latency (from cluster publish to classification)
+  double latency = 0.0;
+  {
+    std::lock_guard<std::mutex> lock(latency_mutex_);
+    auto it = cluster_publish_times_.find(msg->header.stamp);
+    if (it != cluster_publish_times_.end()) {
+      ros::Time now = ros::Time::now();
+      latency = (now - it->second).toSec();
+      classification_latencies_.push_back(latency);
+      cluster_publish_times_.erase(it);
+    }
+  }
+  
+  ROS_DEBUG("Received batch classification with %zu clusters for stamp %f (latency: %.3f s)", 
+            msg->classified_clusters.size(), msg->header.stamp.toSec(), latency);
   
   std::vector<sensor_msgs::PointCloud2::ConstPtr> human_clusters;
   for (const auto& cluster : msg->classified_clusters) {
@@ -765,6 +791,78 @@ void MotionDetector::batchClassificationCallback(const pointosr_ros::classificat
   processFilteredClusters(cluster_map, msg->header.stamp);
   
   frame_timer.Stop();
+}
+
+void MotionDetector::saveLatenciesToFile() const {
+  if (!config_.evaluate || !evaluator_ || classification_latencies_.empty()) {
+    return;
+  }
+  
+  //get output directory from evaluator
+  std::string output_file;
+  try {
+    ros::NodeHandle nh_private("~");
+    std::string output_dir;
+    if (nh_private.getParam("evaluation/output_directory", output_dir)) {
+      output_file = output_dir + "/classification_latencies.txt";
+    } else {
+      LOG(WARNING) << "Could not get output directory, skipping latency file.";
+      return;
+    }
+  } catch (const std::exception& e) {
+    LOG(ERROR) << "Error getting output directory: " << e.what();
+    return;
+  }
+  
+  std::lock_guard<std::mutex> lock(latency_mutex_);
+  
+  //calculate metrics
+  double sum = 0.0;
+  double min_val = std::numeric_limits<double>::max();
+  double max_val = std::numeric_limits<double>::min();
+  
+  for (double latency : classification_latencies_) {
+    sum += latency;
+    if (latency < min_val) min_val = latency;
+    if (latency > max_val) max_val = latency;
+  }
+  
+  double mean = sum / classification_latencies_.size();
+  
+  double variance_sum = 0.0;
+  for (double latency : classification_latencies_) {
+    double diff = latency - mean;
+    variance_sum += diff * diff;
+  }
+  double std_dev = std::sqrt(variance_sum / classification_latencies_.size());
+  
+  std::ofstream file(output_file);
+  if (!file.is_open()) {
+    LOG(ERROR) << "Failed to open latency file: " << output_file;
+    return;
+  }
+  
+  file << "End-to-End Classification Latency Statistics\n";
+  file << "============================================\n";
+  file << "Number of samples: " << classification_latencies_.size() << "\n";
+  file << "Mean:   " << (mean * 1000.0) << " ms (" << mean << " s)\n";
+  file << "StdDev: " << (std_dev * 1000.0) << " ms (" << std_dev << " s)\n";
+  file << "Min:    " << (min_val * 1000.0) << " ms (" << min_val << " s)\n";
+  file << "Max:    " << (max_val * 1000.0) << " ms (" << max_val << " s)\n";
+  file << "\nAll latencies (seconds):\n";
+  
+  for (size_t i = 0; i < classification_latencies_.size(); ++i) {
+    file << classification_latencies_[i];
+    if (i < classification_latencies_.size() - 1) {
+      file << ", ";
+    }
+    if ((i + 1) % 10 == 0) {
+      file << "\n";
+    }
+  }
+  file << "\n";
+  
+  file.close();
 }
 
 }
