@@ -85,6 +85,9 @@ class MotionDetector {
 
   // Constructor.
   MotionDetector(const ros::NodeHandle& nh, const ros::NodeHandle& nh_private);
+  
+  // Destructor.
+  ~MotionDetector();
 
   // Setup.
   void setupMembers();

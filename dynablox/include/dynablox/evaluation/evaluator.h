@@ -122,6 +122,8 @@ class Evaluator {
                                             const uint fn);
 
   int getNumberOfEvaluatedFrames() const { return gt_frame_counter_; }
+  
+  std::string getOutputDirectory() const { return output_directory_; }
 
  private:
   const Config config_;

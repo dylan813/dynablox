@@ -77,6 +77,11 @@ MotionDetector::MotionDetector(const ros::NodeHandle& nh,
                                 << config_utilities::Global::printAllConfigs();
 }
 
+MotionDetector::~MotionDetector() {
+  // Save latencies on shutdown
+  saveLatenciesToFile();
+}
+
 void MotionDetector::setupMembers() {
   // Voxblox. Overwrite dependent config parts. Note that this TSDF layer is
   // shared with all other processing components and is mutable for processing.
@@ -123,6 +128,9 @@ void MotionDetector::setupMembers() {
     evaluator_ = std::make_shared<Evaluator>(
         config_utilities::getConfigFromRos<Evaluator::Config>(
             ros::NodeHandle(nh_private_, "evaluation")));
+    
+    //publish timestamped output directory for other nodes
+    nh_private_.setParam("evaluation/actual_output_directory", evaluator_->getOutputDirectory());
   }
 
   // Visualization.
@@ -240,6 +248,7 @@ void MotionDetector::pointcloudCallback(
           evaluator_->getNumberOfEvaluatedFrames() >= config_.shutdown_after) {
         LOG(INFO) << "Evaluated " << config_.shutdown_after
                   << " frames, shutting down";
+        saveLatenciesToFile();
         ros::shutdown();
       }
     }
@@ -692,9 +701,6 @@ void MotionDetector::processFilteredClusters(
     Clusters empty_clusters;
     evaluator_->evaluateFrame(raw_cloud, raw_info, empty_clusters);
     eval_timer.Stop();
-    
-    //save latency data
-    saveLatenciesToFile();
   }
 
   // Run visualization if enabled
@@ -799,20 +805,13 @@ void MotionDetector::saveLatenciesToFile() const {
   }
   
   //get output directory from evaluator
-  std::string output_file;
-  try {
-    ros::NodeHandle nh_private("~");
-    std::string output_dir;
-    if (nh_private.getParam("evaluation/output_directory", output_dir)) {
-      output_file = output_dir + "/classification_latencies.txt";
-    } else {
-      LOG(WARNING) << "Could not get output directory, skipping latency file.";
-      return;
-    }
-  } catch (const std::exception& e) {
-    LOG(ERROR) << "Error getting output directory: " << e.what();
+  std::string output_dir = evaluator_->getOutputDirectory();
+  if (output_dir.empty()) {
+    LOG(WARNING) << "Could not get output directory, skipping latency file.";
     return;
   }
+  
+  std::string output_file = output_dir + "/classification_latencies.txt";
   
   std::lock_guard<std::mutex> lock(latency_mutex_);
   
