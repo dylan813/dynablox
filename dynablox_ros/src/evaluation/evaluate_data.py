@@ -82,7 +82,7 @@ def table(data_path, metrics,
     expected_entries = 10  # Default for DOALS
     for name in names:
         if name in BENCHMARK_SCENES:
-            expected_entries = 30
+            expected_entries = 145  # mall_lawn has 145 label files
             break
     
     verify_data(data, names, expected_entries)
