@@ -6,7 +6,7 @@
   <arg name="player_rate" default="1" /> <!-- Realtime factor to play data -->
 
   <!-- Play the data -->
-  <node name="player" pkg="rosbag" type="play" args="--quiet --rate $(arg player_rate) $(arg bag_file) -d 1" /> 
+  <node name="player" pkg="rosbag" type="play" args="--quiet --rate $(arg player_rate) $(arg bag_file) -d 25" /> 
    
   <!-- Lidar Undistortion -->
   <node name="lidar_undistortion" pkg="lidar_undistortion" type="lidar_undistortion_node">
