@@ -3,7 +3,7 @@ project(dynablox_ros)
 
 find_package(catkin_simple REQUIRED)
 catkin_simple(ALL_DEPS_REQUIRED)
-catkin_package()
+
 add_definitions(-std=c++17 -Wall -Wextra)
 
 cs_add_library(${PROJECT_NAME}
@@ -11,6 +11,8 @@ cs_add_library(${PROJECT_NAME}
         src/visualization/cloud_visualizer.cpp
         src/motion_detector.cpp
         )
+
+add_dependencies(${PROJECT_NAME} ${PROJECT_NAME}_generate_messages_cpp)
 
 cs_add_executable(motion_detector
         src/motion_detector_node.cpp
