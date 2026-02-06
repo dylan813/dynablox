@@ -5,6 +5,7 @@
 #include <cmath>
 #include <fstream>
 #include <future>
+#include <iomanip>
 #include <limits>
 #include <mutex>
 #include <string>
@@ -49,11 +50,10 @@ void MotionDetector::Config::setupParamsAndPrinting() {
   setupParam("use_latest_transform", &use_latest_transform);
   setupParam("transform_lookup_timeout", &transform_lookup_timeout);
   setupParam("max_cluster_topics", &max_cluster_topics);
+  setupParam("use_cluster_array", &use_cluster_array);
+  setupParam("cluster_array_topic", &cluster_array_topic);
   setupParam("use_filtered_clusters", &use_filtered_clusters);
-  setupParam("filtered_topic_prefix", &filtered_topic_prefix);
-  setupParam("filtered_trigger_topic", &filtered_trigger_topic);
-  setupParam("use_batch_classification", &use_batch_classification);
-  setupParam("batch_classification_topic", &batch_classification_topic);
+  setupParam("filtered_cluster_array_topic", &filtered_cluster_array_topic);
 }
 
 MotionDetector::MotionDetector(const ros::NodeHandle& nh,
@@ -141,53 +141,35 @@ void MotionDetector::setupMembers() {
 void MotionDetector::setupRos() {
   lidar_pcl_sub_ = nh_.subscribe("pointcloud", config_.queue_size,
                                  &MotionDetector::pointcloudCallback, this);
-  cluster_batch_pub_ =
-      nh_private_.advertise<std_msgs::Header>("cluster_batch", 10);
   
-  cluster_pubs_.clear();
-  cluster_pubs_.reserve(config_.max_cluster_topics);
-  for (int i = 0; i < config_.max_cluster_topics; ++i) {
-      const std::string topic_name = "cluster_" + std::to_string(i);
-      cluster_pubs_.push_back(nh_.advertise<sensor_msgs::PointCloud2>(topic_name, 10));
+  // Setup cluster publishing based on mode
+  if (config_.use_cluster_array) {
+    ROS_INFO("Using ClusterArray mode on topic '%s' (optimized for latency)", 
+             config_.cluster_array_topic.c_str());
+    cluster_array_pub_ = nh_.advertise<dynablox_ros::ClusterArray>(
+        config_.cluster_array_topic, 100);
+  } else {
+    ROS_INFO("Using legacy multi-topic mode (32 separate topics)");
+    cluster_batch_pub_ =
+        nh_private_.advertise<std_msgs::Header>("cluster_batch", 10);
+    
+    cluster_pubs_.clear();
+    cluster_pubs_.reserve(config_.max_cluster_topics);
+    for (int i = 0; i < config_.max_cluster_topics; ++i) {
+        const std::string topic_name = "cluster_" + std::to_string(i);
+        cluster_pubs_.push_back(nh_.advertise<sensor_msgs::PointCloud2>(topic_name, 10));
+    }
   }
 
+  // FilteredClusterArray mode - subscribe to classified human clusters
   if (config_.use_filtered_clusters) {
-    ROS_INFO("Using filtered cluster mode with prefix '%s'", 
-             config_.filtered_topic_prefix.c_str());
-    
-    std::string completion_trigger_topic = config_.filtered_trigger_topic;
-    size_t pos = completion_trigger_topic.find("cluster_batch");
-    if (pos != std::string::npos) {
-      completion_trigger_topic.replace(pos, 13, "filtered_complete"); //13=length of "cluster_batch"
-    }
-    filtered_trigger_sub_ = nh_.subscribe(completion_trigger_topic, 10,
-                                        &MotionDetector::filteredTriggerCallback, this);
-    ROS_INFO("Subscribing to completion trigger on '%s'", completion_trigger_topic.c_str());
-    
-    filtered_cluster_subs_.reserve(config_.max_cluster_topics);
-    for (int i = 0; i < config_.max_cluster_topics; ++i) {
-      std::string topic_name = config_.filtered_topic_prefix + std::to_string(i);
-      filtered_cluster_subs_.push_back(
-        nh_.subscribe<sensor_msgs::PointCloud2>(
-          topic_name, 10,
-          [this, i](const sensor_msgs::PointCloud2::ConstPtr& msg) {
-            filteredClusterCallback(msg, i);
-          }
-        )
-      );
-    }
-  }
-  
-  if (config_.use_batch_classification) {
-    ROS_INFO("Using batch classification mode on topic '%s'", 
-             config_.batch_classification_topic.c_str());
-    
-    batch_classification_sub_ = nh_.subscribe(
-      config_.batch_classification_topic, 10,
-      &MotionDetector::batchClassificationCallback, this);
-    
-    ROS_INFO("Subscribed to batch classifications on '%s'", 
-             config_.batch_classification_topic.c_str());
+    ROS_INFO("🚀 FilteredClusterArray mode enabled on '%s' (TCP_NODELAY enabled)", 
+             config_.filtered_cluster_array_topic.c_str());
+    ros::TransportHints hints;
+    hints.tcpNoDelay(true);
+    filtered_cluster_array_sub_ = nh_.subscribe(
+      config_.filtered_cluster_array_topic, 100,
+      &MotionDetector::filteredClusterArrayCallback, this, hints);
   }
 }
 
@@ -195,6 +177,9 @@ void MotionDetector::pointcloudCallback(
     const sensor_msgs::PointCloud2::Ptr& msg) {
   Timer frame_timer("frame");
   Timer detection_timer("motion_detection");
+
+  // UNIFIED TIMING: Record when PointCloud2 arrived
+  ros::WallTime t0_pointcloud_received = ros::WallTime::now();
 
   // Lookup cloud transform T_M_S of sensor (S) to map (M).
   // If different sensor frame is required, update the message.
@@ -206,8 +191,21 @@ void MotionDetector::pointcloudCallback(
   tf::StampedTransform T_M_S;
   if (!lookupTransform(config_.global_frame_name, sensor_frame_name,
                        msg->header.stamp.toNSec(), T_M_S)) {
-    // Getting transform failed, need to skip.
-    return;
+    // Getting transform failed - log warning but try to continue with identity or previous transform
+    if (have_last_good_transform_) {
+      ROS_WARN_STREAM_THROTTLE(1.0, "TF lookup failed for stamp " << msg->header.stamp.toSec() 
+                                    << ", using last known transform to avoid dropping frame");
+      T_M_S = last_good_T_M_S_;
+    } else {
+      // Last resort: use identity transform (assumes sensor and map are aligned)
+      ROS_ERROR_STREAM_THROTTLE(1.0, "TF lookup failed for stamp " << msg->header.stamp.toSec() 
+                                     << " and no previous transform available. Using identity transform.");
+      T_M_S.setIdentity();
+      T_M_S.frame_id_ = config_.global_frame_name;
+      T_M_S.child_frame_id_ = sensor_frame_name;
+      T_M_S.stamp_ = msg->header.stamp;
+    }
+    // Continue processing instead of skipping frame
   }
   tf_lookup_timer.Stop();
 
@@ -218,6 +216,9 @@ void MotionDetector::pointcloudCallback(
   Cloud cloud;
   preprocessing_->processPointcloud(msg, T_M_S, cloud, cloud_info);
   preprocessing_timer.Stop();
+  
+  // UNIFIED TIMING: Record preprocessing done
+  ros::WallTime t1_preprocessing_done = ros::WallTime::now();
 
   // Build a mapping of all blocks to voxels to points for the scan.
   Timer setup_timer("motion_detection/indexing_setup");
@@ -232,6 +233,9 @@ void MotionDetector::pointcloudCallback(
       point_map, occupied_ever_free_voxel_indices, frame_counter_, cloud,
       cloud_info);
   clustering_timer.Stop();
+  
+  // UNIFIED TIMING: Record clustering done
+  ros::WallTime t2_clustering_done = ros::WallTime::now();
 
   if (!config_.use_filtered_clusters) {
     // Tracking.
@@ -282,12 +286,10 @@ void MotionDetector::pointcloudCallback(
   detection_timer.Stop();
 
   //store the raw pointcloud for evaluation
+  // Buffer is pruned dynamically in FilteredClusterArrayCallback when frames are consumed
   if (config_.use_filtered_clusters) {
     std::lock_guard<std::mutex> lock(raw_buffer_lock_);
     raw_cloud_buffer_[msg->header.stamp] = std::make_pair(cloud, cloud_info);
-    while (raw_cloud_buffer_.size() > kMaxInFlight) {
-      raw_cloud_buffer_.erase(raw_cloud_buffer_.begin());
-    }
   }
 
   size_t num_clusters_to_publish = clusters.size();
@@ -298,50 +300,137 @@ void MotionDetector::pointcloudCallback(
     num_clusters_to_publish = config_.max_cluster_topics;
   }
 
-  for (size_t i = 0; i < num_clusters_to_publish; ++i) {
-    const auto& cluster = clusters[i];
+  if (config_.use_cluster_array) {
+    // NEW: Optimized single-message publishing
+    dynablox_ros::ClusterArray array_msg;
+    array_msg.header = msg->header;
+    array_msg.num_clusters = 0;  // Will count valid clusters
     
-    if (cluster.points.empty()) {
-      continue;
+    for (size_t i = 0; i < num_clusters_to_publish; ++i) {
+      const auto& cluster = clusters[i];
+      
+      if (cluster.points.empty()) {
+        continue;
+      }
+      
+      pcl::PointCloud<pcl::PointXYZI>::Ptr cluster_cloud(new pcl::PointCloud<pcl::PointXYZI>);
+      
+      for (const auto& point_idx : cluster.points) {
+        pcl::PointXYZI point;
+        point.x = cloud[point_idx].x;
+        point.y = cloud[point_idx].y;
+        point.z = cloud[point_idx].z;
+        point.intensity = cloud[point_idx].intensity;
+        
+        cluster_cloud->points.push_back(point);
+      }
+      
+      if (!cluster_cloud->empty()) {
+        cluster_cloud->width = cluster_cloud->points.size();
+        cluster_cloud->height = 1;
+        cluster_cloud->is_dense = true;
+        
+        sensor_msgs::PointCloud2 cluster_msg;
+        pcl::toROSMsg(*cluster_cloud, cluster_msg);
+        cluster_msg.header = msg->header;
+        
+        // Add to array
+        array_msg.clusters.push_back(cluster_msg);
+        array_msg.cluster_ids.push_back(i);
+        
+        // Calculate centroid
+        geometry_msgs::Point centroid;
+        centroid.x = 0.0;
+        centroid.y = 0.0;
+        centroid.z = 0.0;
+        for (const auto& point_idx : cluster.points) {
+          centroid.x += cloud[point_idx].x;
+          centroid.y += cloud[point_idx].y;
+          centroid.z += cloud[point_idx].z;
+        }
+        centroid.x /= cluster.points.size();
+        centroid.y /= cluster.points.size();
+        centroid.z /= cluster.points.size();
+        
+        array_msg.centroids.push_back(centroid);
+        array_msg.cluster_sizes.push_back(cluster.points.size());
+        array_msg.num_clusters++;
+      }
     }
     
-    pcl::PointCloud<pcl::PointXYZI>::Ptr cluster_cloud(new pcl::PointCloud<pcl::PointXYZI>);
-    
-    for (const auto& point_idx : cluster.points) {
-      pcl::PointXYZI point;
-      point.x = cloud[point_idx].x;
-      point.y = cloud[point_idx].y;
-      point.z = cloud[point_idx].z;
-      point.intensity = cloud[point_idx].intensity;
-      
-      cluster_cloud->points.push_back(point);
+    size_t total_bytes = 0;
+    for (const auto& cluster_msg : array_msg.clusters) {
+      total_bytes += cluster_msg.data.size();
     }
     
-    if (!cluster_cloud->empty()) {
-      cluster_cloud->width = cluster_cloud->points.size();
-      cluster_cloud->height = 1;
-      cluster_cloud->is_dense = true;
+    // Record wall-clock time for component latency tracking
+    if (config_.use_filtered_clusters) {
+      std::lock_guard<std::mutex> lock(latency_mutex_);
+      ComponentTiming timing;
+      timing.pointcloud_received = t0_pointcloud_received;
+      timing.preprocessing_done = t1_preprocessing_done;
+      timing.clustering_done = t2_clustering_done;
+      timing.cluster_array_published = ros::WallTime::now();
       
-      sensor_msgs::PointCloud2 output_msg;
-      pcl::toROSMsg(*cluster_cloud, output_msg);
-      output_msg.header = msg->header; 
+      // Store sub-component durations
+      timing.dynablox_preprocessing_ms = (t1_preprocessing_done - t0_pointcloud_received).toSec() * 1000.0;
+      timing.dynablox_clustering_ms = (t2_clustering_done - t1_preprocessing_done).toSec() * 1000.0;
       
-      cluster_pubs_[i].publish(output_msg);
+      timing_data_[msg->header.stamp] = timing;
     }
+    
+    // Single publish operation!
+    cluster_array_pub_.publish(array_msg);
+    
+    // Log message size for debugging communication latency
+    size_t total_points = 0;
+    for (const auto& cluster_msg : array_msg.clusters) {
+      total_points += cluster_msg.width * cluster_msg.height;
+    }
+    ROS_INFO_THROTTLE(1.0, "ClusterArray published: %u clusters, %zu points | Size: %.2f KB", 
+                      array_msg.num_clusters, total_points, total_bytes / 1024.0);
+    
+  } else {
+    // LEGACY: Multi-topic publishing (backwards compatibility)
+    for (size_t i = 0; i < num_clusters_to_publish; ++i) {
+      const auto& cluster = clusters[i];
+      
+      if (cluster.points.empty()) {
+        continue;
+      }
+      
+      pcl::PointCloud<pcl::PointXYZI>::Ptr cluster_cloud(new pcl::PointCloud<pcl::PointXYZI>);
+      
+      for (const auto& point_idx : cluster.points) {
+        pcl::PointXYZI point;
+        point.x = cloud[point_idx].x;
+        point.y = cloud[point_idx].y;
+        point.z = cloud[point_idx].z;
+        point.intensity = cloud[point_idx].intensity;
+        
+        cluster_cloud->points.push_back(point);
+      }
+      
+      if (!cluster_cloud->empty()) {
+        cluster_cloud->width = cluster_cloud->points.size();
+        cluster_cloud->height = 1;
+        cluster_cloud->is_dense = true;
+        
+        sensor_msgs::PointCloud2 output_msg;
+        pcl::toROSMsg(*cluster_cloud, output_msg);
+        output_msg.header = msg->header; 
+        
+        cluster_pubs_[i].publish(output_msg);
+      }
+    }
+    
+    std_msgs::Header batch_manifest_msg;
+    batch_manifest_msg.stamp = msg->header.stamp;
+    batch_manifest_msg.frame_id = msg->header.frame_id;
+    batch_manifest_msg.seq = num_clusters_to_publish;
+    
+    cluster_batch_pub_.publish(batch_manifest_msg);
   }
-
-  std_msgs::Header batch_manifest_msg;
-  batch_manifest_msg.stamp = msg->header.stamp;
-  batch_manifest_msg.frame_id = msg->header.frame_id;
-  batch_manifest_msg.seq = num_clusters_to_publish;
-  
-  //record publish time for latency tracking
-  if (config_.use_batch_classification) {
-    std::lock_guard<std::mutex> lock(latency_mutex_);
-    cluster_publish_times_[msg->header.stamp] = ros::Time::now();
-  }
-  
-  cluster_batch_pub_.publish(batch_manifest_msg);
 
   frame_timer.Stop();
 }
@@ -380,7 +469,14 @@ bool MotionDetector::lookupTransform(const std::string& target_frame,
       return true;
     }
 
-    LOG(WARNING) << "Could not get sensor transform within timeout, skipping pointcloud";
+    // Even if use_previous_transform_on_fail is false, try to use previous transform as last resort
+    if (have_last_good_transform_) {
+      LOG(WARNING) << "Could not get sensor transform within timeout, reusing previous transform to avoid dropping frame";
+      result = last_good_T_M_S_;
+      return true;
+    }
+    
+    LOG(WARNING) << "Could not get sensor transform within timeout and no previous transform available";
     return false;
   } catch (tf::TransformException& ex) {
     if (config_.use_previous_transform_on_fail && have_last_good_transform_) {
@@ -390,6 +486,14 @@ bool MotionDetector::lookupTransform(const std::string& target_frame,
       result = last_good_T_M_S_;
       return true;
     }
+    
+    // Even if use_previous_transform_on_fail is false, try to use previous transform as last resort
+    if (have_last_good_transform_) {
+      LOG(WARNING) << "TF exception: " << ex.what() << "; reusing previous transform to avoid dropping frame";
+      result = last_good_T_M_S_;
+      return true;
+    }
+    
     LOG(WARNING) << "Could not get sensor transform, skipping pointcloud: " << ex.what();
     return false;
   }
@@ -509,57 +613,82 @@ void MotionDetector::blockwiseBuildPointMap(
   }
 }
 
-void MotionDetector::filteredTriggerCallback(const std_msgs::Header::ConstPtr& msg) {
-   std::lock_guard<std::mutex> lock(filtered_buffer_lock_);
-   
-   ros::Time stamp = msg->stamp;
-   int expected_count = msg->seq;
-   
-   filtered_trigger_buffer_[stamp] = expected_count;
-   
-   ROS_DEBUG("Classification complete for stamp %f with %d filtered clusters", stamp.toSec(), expected_count);
-   
-   auto clusters_it = filtered_cluster_buffer_.find(stamp);
-   if (clusters_it != filtered_cluster_buffer_.end()) {
-     size_t have = clusters_it->second.size();
-     if (have >= static_cast<size_t>(expected_count)) {
-       ROS_DEBUG("Processing %zu buffered filtered clusters for stamp %f (expected %d)", have, stamp.toSec(), expected_count);
-       processFilteredClusters(clusters_it->second, stamp);
-       filtered_cluster_buffer_.erase(clusters_it);
-       filtered_trigger_buffer_.erase(stamp);
-     } else {
-       ROS_DEBUG("Waiting for remaining %zu clusters for stamp %f", static_cast<size_t>(expected_count) - have, stamp.toSec());
-     }
-   } else {
-     ROS_DEBUG("No clusters buffered yet for stamp %f, waiting for them to arrive", stamp.toSec());
-   }
-   
-   pruneInflightBuffers();
- }
-
-void MotionDetector::filteredClusterCallback(const sensor_msgs::PointCloud2::ConstPtr& msg, int cluster_index) {
-   std::lock_guard<std::mutex> lock(filtered_buffer_lock_);
-   
-   ros::Time stamp = msg->header.stamp;
-   
-   ROS_DEBUG("Received filtered cluster %d for stamp %f", cluster_index, stamp.toSec());
-   
-   auto& cluster_map = filtered_cluster_buffer_[stamp];
-   cluster_map[cluster_index] = msg;
-   
-   auto trig_it = filtered_trigger_buffer_.find(stamp);
-   if (trig_it != filtered_trigger_buffer_.end()) {
-     int expected_count = trig_it->second;
-     if (cluster_map.size() >= static_cast<size_t>(expected_count)) {
-       ROS_DEBUG("All %d filtered clusters received for stamp %f. Processing now.", expected_count, stamp.toSec());
-       processFilteredClusters(cluster_map, stamp);
-       filtered_cluster_buffer_.erase(stamp);
-       filtered_trigger_buffer_.erase(trig_it);
-     }
-   }
-   
-   pruneInflightBuffers();
- }
+void MotionDetector::filteredClusterArrayCallback(const dynablox_ros::FilteredClusterArray::ConstPtr& msg) {
+  ros::Time stamp = msg->header.stamp;
+  uint32_t num_clusters = msg->num_clusters;
+  
+  // UNIFIED TIMING: Record when FilteredClusterArray arrived
+  ros::WallTime t4_filtered_received = ros::WallTime::now();
+  
+  // Calculate component latencies using wall-clock time
+    double total_latency_ms = 0.0;
+    double pointosr_ms = 0.0;
+    double communication_ms = 0.0;
+    {
+      std::lock_guard<std::mutex> lock(latency_mutex_);
+      auto it = timing_data_.find(stamp);
+      if (it != timing_data_.end()) {
+        // Complete the timing record
+        it->second.filtered_array_received = t4_filtered_received;
+        it->second.processing_done = ros::WallTime::now();
+        it->second.pointosr_processing_ms = msg->processing_time_ms;
+        
+        // Total pipeline latency (wall-clock)
+        total_latency_ms = (t4_filtered_received - it->second.cluster_array_published).toSec() * 1000.0;
+        
+        // PointOSR processing time from message
+        pointosr_ms = msg->processing_time_ms;
+        
+        // Communication overhead = Total - PointOSR processing
+        communication_ms = total_latency_ms - pointosr_ms;
+        
+        total_pipeline_latencies_.push_back(total_latency_ms);
+        pointosr_latencies_.push_back(pointosr_ms);
+        communication_latencies_.push_back(communication_ms);
+        
+        // Save for unified logging
+        completed_timings_.push_back(it->second);
+        timing_data_.erase(it);
+      }
+    }
+  
+  // Log message size for debugging
+  size_t filtered_points = 0;
+  size_t filtered_bytes = 0;
+  for (const auto& cluster_msg : msg->clusters) {
+    filtered_points += cluster_msg.width * cluster_msg.height;
+    filtered_bytes += cluster_msg.data.size();
+  }
+  
+  if (total_latency_ms > 0.0) {
+    ROS_INFO_STREAM_THROTTLE(1.0, "FilteredClusterArray received: " << num_clusters 
+                                   << " clusters, " << filtered_points << " points, "
+                                   << filtered_bytes << " bytes (" << (filtered_bytes/1024.0) << " KB) | "
+                                   << "Pipeline: " << total_latency_ms << " ms "
+                                   << "(PointOSR: " << pointosr_ms << " ms, "
+                                   << "Comm: " << communication_ms << " ms)");
+  }
+  
+  ROS_DEBUG("Received FilteredClusterArray for stamp %f with %u clusters (total: %.1f ms, pointosr: %.1f ms, comm: %.1f ms)", 
+            stamp.toSec(), num_clusters, total_latency_ms, pointosr_ms, communication_ms);
+  
+  if (num_clusters == 0) {
+    ROS_DEBUG("FilteredClusterArray for stamp %f has 0 clusters — skipping processing.", stamp.toSec());
+    return;
+  }
+  
+  // Convert FilteredClusterArray to cluster map
+  std::unordered_map<int, sensor_msgs::PointCloud2::ConstPtr> cluster_map;
+  for (size_t i = 0; i < msg->clusters.size() && i < num_clusters; ++i) {
+    auto pc_ptr = boost::make_shared<sensor_msgs::PointCloud2>(msg->clusters[i]);
+    cluster_map[static_cast<int>(i)] = pc_ptr;
+  }
+  
+  ROS_DEBUG("FilteredClusterArray: Processing %zu clusters for stamp %f", cluster_map.size(), stamp.toSec());
+  
+  // Process the filtered clusters directly (no buffering/synchronization needed!)
+  processFilteredClusters(cluster_map, stamp);
+}
 
 void MotionDetector::processFilteredClusters(
     const std::unordered_map<int, sensor_msgs::PointCloud2::ConstPtr>& cluster_msgs,
@@ -650,6 +779,13 @@ void MotionDetector::processFilteredClusters(
       raw_info = it->second.second;
       raw_cloud_buffer_.erase(it);
       have_raw_cloud = true;
+      
+      // Trigger-based pruning: remove all frames older than the one we just processed
+      // These frames will never be used since classification has moved past them
+      auto prune_it = raw_cloud_buffer_.begin();
+      while (prune_it != raw_cloud_buffer_.end() && prune_it->first < stamp) {
+        prune_it = raw_cloud_buffer_.erase(prune_it);
+      }
     }
   }
 
@@ -715,92 +851,13 @@ void MotionDetector::processFilteredClusters(
   frame_timer.Stop();
 }
 
-void MotionDetector::pruneInflightBuffers() {
-  while (filtered_trigger_buffer_.size() > kMaxInFlight) {
-    dropFrame(filtered_trigger_buffer_.begin()->first, "trigger overflow");
-  }
-
-  while (filtered_cluster_buffer_.size() > kMaxInFlight) {
-    dropFrame(filtered_cluster_buffer_.begin()->first, "cluster overflow");
-  }
-}
-
-void MotionDetector::dropFrame(const ros::Time& stamp, const std::string& reason) {
-  size_t have = 0;
-  auto cl_it = filtered_cluster_buffer_.find(stamp);
-  if (cl_it != filtered_cluster_buffer_.end()) {
-    have = cl_it->second.size();
-    filtered_cluster_buffer_.erase(cl_it);
-  }
-
-  int expected = 0;
-  auto tr_it = filtered_trigger_buffer_.find(stamp);
-  if (tr_it != filtered_trigger_buffer_.end()) {
-    expected = tr_it->second;
-    filtered_trigger_buffer_.erase(tr_it);
-  }
-
-  ROS_WARN("Dropping incomplete frame %f — %s (expected %d, received %zu)",
-           stamp.toSec(), reason.c_str(), expected, have);
-}
-
-void MotionDetector::batchClassificationCallback(const pointosr_ros::classification_batch::ConstPtr& msg) {
-  Timer frame_timer("batch_classification");
-  
-  //calculate end-to-end latency (from cluster publish to classification)
-  double latency = 0.0;
-  {
-    std::lock_guard<std::mutex> lock(latency_mutex_);
-    auto it = cluster_publish_times_.find(msg->header.stamp);
-    if (it != cluster_publish_times_.end()) {
-      ros::Time now = ros::Time::now();
-      latency = (now - it->second).toSec();
-      classification_latencies_.push_back(latency);
-      cluster_publish_times_.erase(it);
-    }
+void MotionDetector::saveLatenciesToFile() const{
+  if (!config_.evaluate || !evaluator_) {
+    return;
   }
   
-  ROS_DEBUG("Received batch classification with %zu clusters for stamp %f (latency: %.3f s)", 
-            msg->classified_clusters.size(), msg->header.stamp.toSec(), latency);
-  
-  std::vector<sensor_msgs::PointCloud2::ConstPtr> human_clusters;
-  for (const auto& cluster : msg->classified_clusters) {
-    if (cluster.is_human && cluster.processing_success) {
-      auto pc_ptr = boost::make_shared<sensor_msgs::PointCloud2>(cluster.pointcloud);
-      human_clusters.push_back(pc_ptr);
-      
-      ROS_DEBUG("Batch: Including human cluster %d (class='%s', conf=%.3f)", 
-                cluster.original_cluster_index, 
-                cluster.class_name.c_str(), 
-                cluster.confidence);
-    } else {
-      ROS_DEBUG("Batch: Filtering out cluster %d (class='%s', human=%s, success=%s)", 
-                cluster.original_cluster_index,
-                cluster.class_name.c_str(),
-                cluster.is_human ? "true" : "false",
-                cluster.processing_success ? "true" : "false");
-    }
-  }
-  
-  std::unordered_map<int, sensor_msgs::PointCloud2::ConstPtr> cluster_map;
-  for (size_t i = 0; i < human_clusters.size(); ++i) {
-    cluster_map[static_cast<int>(i)] = human_clusters[i];
-  }
-  
-  ROS_DEBUG("Batch Classification: Processed %zu total clusters, using %zu human clusters for motion detection",
-           msg->classified_clusters.size(), human_clusters.size());
-  
-  if (msg->processing_errors > 0) {
-    ROS_WARN("Batch Classification: %d clusters had processing errors", msg->processing_errors);
-  }
-  
-  processFilteredClusters(cluster_map, msg->header.stamp);
-  
-  frame_timer.Stop();
-}
-
-void MotionDetector::saveLatenciesToFile() const {
-  if (!config_.evaluate || !evaluator_ || classification_latencies_.empty()) {
+  if (total_pipeline_latencies_.empty()) {
+    LOG(INFO) << "No latency data to save.";
     return;
   }
   
@@ -811,29 +868,37 @@ void MotionDetector::saveLatenciesToFile() const {
     return;
   }
   
-  std::string output_file = output_dir + "/classification_latencies.txt";
+  std::string output_file = output_dir + "/component_latencies.txt";
   
   std::lock_guard<std::mutex> lock(latency_mutex_);
   
-  //calculate metrics
-  double sum = 0.0;
-  double min_val = std::numeric_limits<double>::max();
-  double max_val = std::numeric_limits<double>::min();
+  // Helper to calculate stats
+  auto calc_stats = [](const std::vector<double>& data, double& mean, double& stddev, double& min_val, double& max_val) {
+    if (data.empty()) return;
+    double sum = 0.0;
+    min_val = data[0];
+    max_val = data[0];
+    for (double val : data) {
+      sum += val;
+      if (val < min_val) min_val = val;
+      if (val > max_val) max_val = val;
+    }
+    mean = sum / data.size();
+    double variance_sum = 0.0;
+    for (double val : data) {
+      double diff = val - mean;
+      variance_sum += diff * diff;
+    }
+    stddev = std::sqrt(variance_sum / data.size());
+  };
   
-  for (double latency : classification_latencies_) {
-    sum += latency;
-    if (latency < min_val) min_val = latency;
-    if (latency > max_val) max_val = latency;
-  }
+  double total_mean, total_std, total_min, total_max;
+  double pointosr_mean, pointosr_std, pointosr_min, pointosr_max;
+  double comm_mean, comm_std, comm_min, comm_max;
   
-  double mean = sum / classification_latencies_.size();
-  
-  double variance_sum = 0.0;
-  for (double latency : classification_latencies_) {
-    double diff = latency - mean;
-    variance_sum += diff * diff;
-  }
-  double std_dev = std::sqrt(variance_sum / classification_latencies_.size());
+  calc_stats(total_pipeline_latencies_, total_mean, total_std, total_min, total_max);
+  calc_stats(pointosr_latencies_, pointosr_mean, pointosr_std, pointosr_min, pointosr_max);
+  calc_stats(communication_latencies_, comm_mean, comm_std, comm_min, comm_max);
   
   std::ofstream file(output_file);
   if (!file.is_open()) {
@@ -841,27 +906,199 @@ void MotionDetector::saveLatenciesToFile() const {
     return;
   }
   
-  file << "End-to-End Classification Latency Statistics\n";
-  file << "============================================\n";
-  file << "Number of samples: " << classification_latencies_.size() << "\n";
-  file << "Mean:   " << (mean * 1000.0) << " ms (" << mean << " s)\n";
-  file << "StdDev: " << (std_dev * 1000.0) << " ms (" << std_dev << " s)\n";
-  file << "Min:    " << (min_val * 1000.0) << " ms (" << min_val << " s)\n";
-  file << "Max:    " << (max_val * 1000.0) << " ms (" << max_val << " s)\n";
-  file << "\nAll latencies (seconds):\n";
+  file << "=================================================================\n";
+  file << "COMPONENT LATENCY BREAKDOWN (Wall-Clock Time)\n";
+  file << "=================================================================\n\n";
+  file << "PURPOSE: Identify bottlenecks in the processing pipeline\n\n";
+  file << "COMPONENTS:\n";
+  file << "  1. PointOSR Processing: Actual classification time (from message)\n";
+  file << "  2. Communication: ROS message passing overhead\n";
+  file << "  3. Total Pipeline: End-to-end latency (measured)\n\n";
+  file << "NOTE: For Dynablox processing times, see timings.txt\n\n";
+  file << "=================================================================\n\n";
   
-  for (size_t i = 0; i < classification_latencies_.size(); ++i) {
-    file << classification_latencies_[i];
-    if (i < classification_latencies_.size() - 1) {
-      file << ", ";
-    }
-    if ((i + 1) % 10 == 0) {
-      file << "\n";
-    }
+  file << "TOTAL PIPELINE LATENCY\n";
+  file << "============================================\n";
+  file << "Number of samples: " << total_pipeline_latencies_.size() << "\n";
+  file << "Mean:   " << total_mean << " ms\n";
+  file << "StdDev: " << total_std << " ms\n";
+  file << "Min:    " << total_min << " ms\n";
+  file << "Max:    " << total_max << " ms\n\n";
+  
+  file << "POINTOSR PROCESSING TIME\n";
+  file << "============================================\n";
+  file << "Number of samples: " << pointosr_latencies_.size() << "\n";
+  file << "Mean:   " << pointosr_mean << " ms\n";
+  file << "StdDev: " << pointosr_std << " ms\n";
+  file << "Min:    " << pointosr_min << " ms\n";
+  file << "Max:    " << pointosr_max << " ms\n\n";
+  
+  file << "COMMUNICATION OVERHEAD\n";
+  file << "============================================\n";
+  file << "Number of samples: " << communication_latencies_.size() << "\n";
+  file << "Mean:   " << comm_mean << " ms\n";
+  file << "StdDev: " << comm_std << " ms\n";
+  file << "Min:    " << comm_min << " ms\n";
+  file << "Max:    " << comm_max << " ms\n\n";
+  
+  file << "ANALYSIS\n";
+  file << "============================================\n";
+  file << "PointOSR %:      " << (pointosr_mean / total_mean * 100.0) << "%\n";
+  file << "Communication %: " << (comm_mean / total_mean * 100.0) << "%\n\n";
+  
+  file << "All total pipeline latencies (ms):\n";
+  for (size_t i = 0; i < total_pipeline_latencies_.size(); ++i) {
+    file << total_pipeline_latencies_[i];
+    if (i < total_pipeline_latencies_.size() - 1) file << ", ";
+    if ((i + 1) % 10 == 0) file << "\n";
+  }
+  file << "\n\n";
+  
+  file << "All PointOSR latencies (ms):\n";
+  for (size_t i = 0; i < pointosr_latencies_.size(); ++i) {
+    file << pointosr_latencies_[i];
+    if (i < pointosr_latencies_.size() - 1) file << ", ";
+    if ((i + 1) % 10 == 0) file << "\n";
+  }
+  file << "\n\n";
+  
+  file << "All communication latencies (ms):\n";
+  for (size_t i = 0; i < communication_latencies_.size(); ++i) {
+    file << communication_latencies_[i];
+    if (i < communication_latencies_.size() - 1) file << ", ";
+    if ((i + 1) % 10 == 0) file << "\n";
   }
   file << "\n";
   
   file.close();
+  LOG(INFO) << "Saved component latencies to: " << output_file;
+  LOG(INFO) << "Total pipeline: " << total_mean << " ms (PointOSR: " << pointosr_mean 
+            << " ms, Comm: " << comm_mean << " ms)";
+  
+  // Also save unified timing log
+  saveUnifiedTimingLog();
+}
+
+void MotionDetector::saveUnifiedTimingLog() const {
+  if (!config_.evaluate || !evaluator_) {
+    return;
+  }
+  
+  if (completed_timings_.empty()) {
+    LOG(INFO) << "No unified timing data to save.";
+    return;
+  }
+  
+  std::string output_dir = evaluator_->getOutputDirectory();
+  if (output_dir.empty()) {
+    LOG(WARNING) << "Could not get output directory, skipping unified timing log.";
+    return;
+  }
+  
+  std::string output_file = output_dir + "/unified_timing_log.txt";
+  
+  std::ofstream file(output_file);
+  if (!file.is_open()) {
+    LOG(ERROR) << "Failed to open unified timing file: " << output_file;
+    return;
+  }
+  
+  file << "=================================================================\n";
+  file << "UNIFIED TIMING LOG - COMPLETE PIPELINE BREAKDOWN\n";
+  file << "=================================================================\n\n";
+  file << "This log shows the complete end-to-end timing for each frame\n";
+  file << "when use_filtered_clusters=true, broken down by component.\n\n";
+  file << "TIMELINE:\n";
+  file << "  t0: PointCloud2 arrives at motion_detector\n";
+  file << "  t1: Preprocessing complete\n";
+  file << "  t2: Clustering complete\n";
+  file << "  t3: ClusterArray published\n";
+  file << "  t4: FilteredClusterArray received back\n";
+  file << "  t5: Processing complete\n\n";
+  file << "COMPONENTS:\n";
+  file << "  - Dynablox Preprocessing: t0 → t1\n";
+  file << "  - Dynablox Clustering: t1 → t2\n";
+  file << "  - PointOSR Total: (from message)\n";
+  file << "  - Communication: (t3 → t4) - PointOSR\n";
+  file << "  - Total Pipeline: t3 → t4\n\n";
+  file << "=================================================================\n\n";
+  
+  // Calculate aggregate statistics
+  std::vector<double> preprocessing_times, clustering_times;
+  std::vector<double> pointosr_times, communication_times, total_times;
+  
+  for (const auto& timing : completed_timings_) {
+    preprocessing_times.push_back(timing.dynablox_preprocessing_ms);
+    clustering_times.push_back(timing.dynablox_clustering_ms);
+    pointosr_times.push_back(timing.pointosr_processing_ms);
+    
+    double total_ms = (timing.filtered_array_received - timing.cluster_array_published).toSec() * 1000.0;
+    double comm_ms = total_ms - timing.pointosr_processing_ms;
+    
+    communication_times.push_back(comm_ms);
+    total_times.push_back(total_ms);
+  }
+  
+  // Helper to print stats
+  auto print_stats = [&file](const std::string& name, const std::vector<double>& data) {
+    if (data.empty()) return;
+    double sum = 0.0, min_val = data[0], max_val = data[0];
+    for (double val : data) {
+      sum += val;
+      if (val < min_val) min_val = val;
+      if (val > max_val) max_val = val;
+    }
+    double mean = sum / data.size();
+    double var_sum = 0.0;
+    for (double val : data) {
+      double diff = val - mean;
+      var_sum += diff * diff;
+    }
+    double stddev = std::sqrt(var_sum / data.size());
+    
+    file << name << ":\n";
+    file << "  Mean:   " << mean << " ms\n";
+    file << "  StdDev: " << stddev << " ms\n";
+    file << "  Min:    " << min_val << " ms\n";
+    file << "  Max:    " << max_val << " ms\n\n";
+  };
+  
+  file << "AGGREGATE STATISTICS\n";
+  file << "============================================\n";
+  file << "Samples: " << completed_timings_.size() << "\n\n";
+  
+  print_stats("Dynablox Preprocessing", preprocessing_times);
+  print_stats("Dynablox Clustering", clustering_times);
+  print_stats("PointOSR Processing", pointosr_times);
+  print_stats("Communication Overhead", communication_times);
+  print_stats("Total Pipeline (t3→t4)", total_times);
+  
+  file << "\n=================================================================\n";
+  file << "PER-FRAME DETAILED BREAKDOWN\n";
+  file << "=================================================================\n\n";
+  file << std::fixed << std::setprecision(3);
+  
+  for (size_t i = 0; i < completed_timings_.size() && i < 50; ++i) {  // First 50 frames
+    const auto& t = completed_timings_[i];
+    
+    double total_ms = (t.filtered_array_received - t.cluster_array_published).toSec() * 1000.0;
+    double comm_ms = total_ms - t.pointosr_processing_ms;
+    
+    file << "Frame " << i << ":\n";
+    file << "  Dynablox Preprocessing: " << t.dynablox_preprocessing_ms << " ms\n";
+    file << "  Dynablox Clustering:    " << t.dynablox_clustering_ms << " ms\n";
+    file << "  PointOSR Processing:    " << t.pointosr_processing_ms << " ms\n";
+    file << "  Communication:          " << comm_ms << " ms\n";
+    file << "  Total Pipeline:         " << total_ms << " ms\n";
+    file << "  ---\n";
+  }
+  
+  if (completed_timings_.size() > 50) {
+    file << "\n... (showing first 50 frames, " << (completed_timings_.size() - 50) << " more frames omitted)\n";
+  }
+  
+  file.close();
+  LOG(INFO) << "Saved unified timing log to: " << output_file;
 }
 
 }

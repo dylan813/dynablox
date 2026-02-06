@@ -16,7 +16,9 @@
 #include <ros/ros.h>
 #include <std_msgs/Header.h>
 #include <sensor_msgs/PointCloud2.h>
-#include <pointosr_ros/classification_batch.h>
+#include <geometry_msgs/Point.h>
+#include <dynablox_ros/ClusterArray.h>
+#include <dynablox_ros/FilteredClusterArray.h>
 #include <voxblox/core/block_hash.h>
 #include <voxblox/core/common.h>
 #include <voxblox_ros/tsdf_server.h>
@@ -66,15 +68,16 @@ class MotionDetector {
     double transform_lookup_timeout = 0.1;  // seconds
     bool use_previous_transform_on_fail = true;
 
-    /// Default max
+    /// Default max (kept for backwards compatibility with config files)
     int max_cluster_topics = 30;
 
+    // Use ClusterArray message instead of individual topics
+    bool use_cluster_array = true;
+    std::string cluster_array_topic = "/cluster_array";
+
+    // FilteredClusterArray mode - when enabled, wait for classified human clusters before evaluation
     bool use_filtered_clusters = false;
-    std::string filtered_topic_prefix = "/filt_cluster_";
-    std::string filtered_trigger_topic = "/motion_detector/cluster_batch";
-    
-    bool use_batch_classification = false;
-    std::string batch_classification_topic = "/classified_clusters";
+    std::string filtered_cluster_array_topic = "/filtered_cluster_array";
 
     Config() { setConfigName("MotionDetector"); }
 
@@ -95,9 +98,7 @@ class MotionDetector {
 
   // Callbacks.
   void pointcloudCallback(const sensor_msgs::PointCloud2::Ptr& msg);
-  void filteredClusterCallback(const sensor_msgs::PointCloud2::ConstPtr& msg, int cluster_index);
-  void filteredTriggerCallback(const std_msgs::Header::ConstPtr& msg);
-  void batchClassificationCallback(const pointosr_ros::classification_batch::ConstPtr& msg);
+  void filteredClusterArrayCallback(const dynablox_ros::FilteredClusterArray::ConstPtr& msg);
 
   // Motion detection pipeline.
   bool lookupTransform(const std::string& target_frame,
@@ -161,18 +162,14 @@ class MotionDetector {
   ros::NodeHandle nh_;
   ros::NodeHandle nh_private_;
   ros::Subscriber lidar_pcl_sub_;
-  ros::Publisher cluster_batch_pub_;
+  ros::Publisher cluster_batch_pub_;  // Kept for backwards compatibility
+  ros::Publisher cluster_array_pub_;  // New unified cluster array publisher
   tf::TransformListener tf_listener_;
   mutable tf::StampedTransform last_good_T_M_S_;
   mutable bool have_last_good_transform_ = false;
   
-  std::vector<ros::Subscriber> filtered_cluster_subs_;
-  ros::Subscriber filtered_trigger_sub_;
-  std::map<ros::Time, std::unordered_map<int, sensor_msgs::PointCloud2::ConstPtr>> filtered_cluster_buffer_;
-  std::mutex filtered_buffer_lock_;
-  std::map<ros::Time, int> filtered_trigger_buffer_;
-  
-  ros::Subscriber batch_classification_sub_;
+  // FilteredClusterArray subscriber
+  ros::Subscriber filtered_cluster_array_sub_;
 
   // Voxblox map.
   std::shared_ptr<voxblox::TsdfServer> tsdf_server_;
@@ -194,22 +191,39 @@ class MotionDetector {
   int frame_counter_ = 0;
   int next_cluster_id_ = 0;
 
-  static constexpr size_t kMaxInFlight = 300;
-  void pruneInflightBuffers();
-  void dropFrame(const ros::Time& stamp, const std::string& reason);
-
-  // In the class definition, add this to the private section:
+  // Legacy individual cluster publishers (kept for backwards compatibility)
   std::vector<ros::Publisher> cluster_pubs_;
 
   //store the raw pointcloud for evaluation
   std::map<ros::Time, std::pair<Cloud, CloudInfo>> raw_cloud_buffer_;
   std::mutex raw_buffer_lock_;
   
-  //track end-to-end latencies for batch classification
-  mutable std::vector<double> classification_latencies_;
-  mutable std::map<ros::Time, ros::Time> cluster_publish_times_;
+  // Track component-level latencies for pipeline analysis
+  struct ComponentTiming {
+    // Full pipeline timing (all wall-clock times)
+    ros::WallTime pointcloud_received;       // t0: When PointCloud2 arrived
+    ros::WallTime preprocessing_done;        // After preprocessing
+    ros::WallTime clustering_done;           // After clustering
+    ros::WallTime cluster_array_published;   // t1: When we sent ClusterArray
+    ros::WallTime filtered_array_received;   // t2: When FilteredClusterArray arrived
+    ros::WallTime processing_done;           // Final processing complete
+    
+    // Sub-component timings (from Dynablox timers)
+    double dynablox_preprocessing_ms = 0.0;
+    double dynablox_clustering_ms = 0.0;
+    
+    // PointOSR timing (from message)
+    double pointosr_processing_ms = 0.0;
+  };
+  
+  mutable std::vector<double> total_pipeline_latencies_;     // Total wall-clock time
+  mutable std::vector<double> pointosr_latencies_;           // PointOSR processing time
+  mutable std::vector<double> communication_latencies_;      // Communication overhead
+  mutable std::map<ros::Time, ComponentTiming> timing_data_;
+  mutable std::vector<ComponentTiming> completed_timings_;   // For unified logging
   mutable std::mutex latency_mutex_;
   void saveLatenciesToFile() const;
+  void saveUnifiedTimingLog() const;
 };
 
 }  // namespace dynablox
