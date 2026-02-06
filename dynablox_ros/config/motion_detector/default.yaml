@@ -4,7 +4,7 @@
 #visualize: true # Set by launch file
 #num_threads: 1  # uses hardware concurrency if left empty.
 queue_size: 20
-shutdown_after: 30  # number evaluations.
+shutdown_after: 150  # number evaluations.
   
 # Frames and TF lookup behavior.
 # Set the global frame and control TF behavior to avoid pose jitter.
@@ -12,8 +12,19 @@ global_frame_name: "odom"
 # Set this only if your bag uses a different sensor frame than the cloud header.
 # Example: "os_sensor" or "os_lidar". Leave empty to use the cloud header.
 sensor_frame_name: ""
-use_latest_transform: false
-transform_lookup_timeout: 0.5  # seconds
+use_latest_transform: true  # Optimized: use latest transform instead of exact timestamp
+transform_lookup_timeout: 0.1  # seconds (reduced from 0.5 for faster timeout)
+
+# ClusterArray mode (optimized single-message publishing)
+use_cluster_array: true
+cluster_array_topic: "/cluster_array"
+
+# FilteredClusterArray mode - wait for classified human clusters before evaluation
+# When enabled: Motion Detector → ClusterArray → Classification → FilteredClusterArray → Motion Detector
+# When disabled: Motion Detector evaluates original clusters directly (no classification)
+# Buffer management: Automatically prunes old frames when FilteredClusterArray is processed (trigger-based)
+use_filtered_clusters: true
+filtered_cluster_array_topic: "/filtered_cluster_array"
   
 # Preprocessing.
 preprocessing:
