@@ -17,6 +17,10 @@
   <buildtool_depend>catkin</buildtool_depend>
   <buildtool_depend>catkin_simple</buildtool_depend>
 
+  <!-- Message generation -->
+  <build_depend>message_generation</build_depend>
+  <exec_depend>message_runtime</exec_depend>
+
   <!-- Dependencies -->
   <depend>roscpp</depend>
   <depend>rospy</depend>
